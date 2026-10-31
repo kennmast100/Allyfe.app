@@ -172,7 +172,15 @@ export const dayLabel = (k: string) => {
 export function Calendar({ selected, onChange, max = 5, allowed }: { selected: string[]; onChange: (days: string[]) => void; max?: number; allowed?: string[] }) {
   const today = new Date();
   today.setHours(0, 0, 0, 0);
-  const [view, setView] = useState({ y: today.getFullYear(), m: today.getMonth() });
+  // Open on the month of the first picked or allowed day, so the client's dates are in view.
+  const [view, setView] = useState(() => {
+    const start = selected[0] ?? allowed?.[0];
+    if (start) {
+      const [y, m] = start.split('-').map(Number);
+      return { y, m: m - 1 };
+    }
+    return { y: today.getFullYear(), m: today.getMonth() };
+  });
   const first = new Date(view.y, view.m, 1);
   const days = new Date(view.y, view.m + 1, 0).getDate();
   const offset = (first.getDay() + 6) % 7;
