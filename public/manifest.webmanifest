@@ -1,0 +1,10 @@
+{
+  "name": "Allyfe",
+  "short_name": "Allyfe",
+  "description": "Skilled People • Real Work • Brighter Lives",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#F8F6F1",
+  "theme_color": "#0E1F3B",
+  "icons": [{ "src": "/allyfe-mark.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any" }]
+}

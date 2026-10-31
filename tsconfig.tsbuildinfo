@@ -1,0 +1,1 @@
+{"root":["./src/App.tsx","./src/main.tsx","./src/components/art.tsx","./src/components/ui.tsx","./src/domain/actions.test.ts","./src/domain/actions.ts","./src/domain/rules.ts","./src/domain/seed.ts","./src/domain/types.ts","./src/screens/artisan.tsx","./src/screens/client.tsx","./src/screens/company.tsx","./src/screens/shared.tsx","./src/store/store.tsx"],"version":"5.9.3"}
