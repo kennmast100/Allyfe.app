@@ -383,7 +383,7 @@ export function OfflineBanner() {
 
 /* ---------------- Me / account ---------------- */
 export function Me() {
-  const { user, state, dispatch, go, forcedOffline, setForcedOffline } = useApp();
+  const { user, state, dispatch, go, forcedOffline, setForcedOffline, env } = useApp();
   if (!user) return null;
   const verified = user.role === 'client' ? null : user.verification.status;
   return (
@@ -452,12 +452,15 @@ export function Me() {
         <button
           className="btn concern"
           onClick={() => {
-            if (confirm('Reset all demo data on this device?')) dispatch({ type: 'reset' }, 'Demo data reset.');
+            if (confirm(env === 'local' ? 'Reset all demo data on this device?' : `Reset the shared ${env} data for every tester?`)) dispatch({ type: 'reset' }, 'Demo data reset.');
           }}
         >
           Reset demo data
         </button>
       </div>
+      <p className="small center mt14">
+        {env === 'local' ? 'Data is saved on this device only.' : `Connected to Allyfe ${env}. Everyone testing sees the same data.`}
+      </p>
       <p className="small center mt14">
         <Logo size={18} />
         <br />

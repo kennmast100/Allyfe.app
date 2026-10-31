@@ -67,11 +67,12 @@ function Screen({ route, user }: { route: Route; user: User }) {
 }
 
 export function App() {
-  const { user, route, toastMsg, online } = useApp();
+  const { user, route, toastMsg, online, env } = useApp();
   return (
     <div className="shell">
       <div className="app">
         {!online && <OfflineBanner />}
+        {env !== 'local' && env !== 'production' && <div className="env-badge">{env.toUpperCase()}</div>}
         <main className="content" key={user?.id ?? 'out'}>
           {!user ? <SignIn /> : !online && NEEDS_NETWORK.includes(route.name) ? <Offline /> : <Screen route={route} user={user} />}
         </main>

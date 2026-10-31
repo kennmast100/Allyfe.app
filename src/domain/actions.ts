@@ -51,11 +51,20 @@ export type Action =
   | { type: 'addComment'; postId: string; text: string }
   | { type: 'markAlertsRead' };
 
-/** Applies an action and returns the new state. Throws DomainError if the action is not allowed. */
-export function reduce(prev: AppState, action: Action, now = Date.now()): AppState {
+/** Actions that only change this device's session and never go to the server. */
+export const LOCAL_ONLY_ACTIONS: Action['type'][] = ['signIn', 'signOut'];
+
+/**
+ * Applies an action and returns the new state. Throws DomainError if the action is not allowed.
+ * Pass the same `now` and `nonce` on the phone and the server and new records get the same ids,
+ * so the phone can show the result instantly and the server's copy still matches.
+ */
+export function reduce(prev: AppState, action: Action, now = Date.now(), nonce?: string): AppState {
   if (action.type === 'reset') return seedState(now);
   const s: AppState = structuredClone(prev);
-  const id = (p: string) => `${p}-${now.toString(36)}-${s.seq++}`;
+  let n = 0;
+  const id = (p: string) => (nonce ? `${p}-${nonce}-${n++}` : `${p}-${now.toString(36)}-${s.seq++}`);
+  if (nonce) s.seq++;
   const me = (): User => (s.sessionUserId && s.users[s.sessionUserId]) || fail('Please sign in first.');
   const meAs = <R extends User['role']>(role: R) => {
     const u = me();

@@ -4,16 +4,38 @@
 
 Allyfe is a marketplace that connects clients with verified artisans. Clients post jobs and pay into Allyfe. Artisans apply or send proposals. The client confirms one artisan, the work gets done, Allyfe releases the money, and the client rates the artisan.
 
-This repository is the first working build: a mobile-first web app (installable PWA) with all three roles, built with React, TypeScript and Vite.
+This repository is the first working build: a mobile-first web app (installable PWA) with all three roles, built with React, TypeScript and Vite, plus a small Node server that keeps one shared copy of the data in Postgres.
 
 ## Run it
 
 ```bash
 npm install
-npm run dev        # http://localhost:5173
-npm test           # business-rule tests
-npm run build      # type-check and production build into dist/
+npm run dev        # app only, data saved on this device: http://localhost:5173
+npm test           # business-rule and server tests
+npm run build      # type-check, build the app into dist/ and the server into dist-server/
+npm start          # app + shared server: http://localhost:3000 (saves to data/state.json)
 ```
+
+Run `npm start` in one terminal and `npm run dev` in another to develop against the shared server. With no server running, the app falls back to saving on the device.
+
+## Deploying to Railway (staging, then production)
+
+1. In Railway: **New Project → Deploy from GitHub repo → `kennmast100/Allyfe.app`**, branch `claude/allyfe-app`.
+2. In the project: **+ New → Database → PostgreSQL**.
+3. On the app service, under **Variables**, add:
+   - `DATABASE_URL` = `${{Postgres.DATABASE_URL}}` (reference the database)
+   - `APP_ENV` = `staging`
+4. Under **Settings → Networking**, click **Generate Domain**.
+
+`railway.json` already sets the build (`npm run build`), the start command (`npm start`) and a health check at `/api/health`. Railway sets `PORT` itself. Each push to the branch redeploys.
+
+For production, make a second Railway environment with its own Postgres and `APP_ENV=production`. Production hides the STAGING badge and blocks **Reset demo data**.
+
+### How the shared data works
+
+- The phone applies each change immediately so the app feels instant, then sends it to `POST /api/action`. The server runs the same rules from `src/domain/actions.ts` on the shared copy and saves it. Both sides produce the same ids from a per-action nonce.
+- Phones check `GET /api/state?since=<rev>` every 3 seconds and when the app regains focus, so the other side of a job shows up within a few seconds.
+- If the server refuses a change (a rule was broken, or someone else got there first), the phone shows why and switches to the server's copy.
 
 On the sign-in screen, pick a demo account, or type its phone number and any 6-digit code. Use **Account → Sign out / switch account** to play the other side of a job.
 
@@ -58,10 +80,10 @@ public/         Logo, PWA manifest, service worker
 
 ## What is simulated (next steps for production)
 
-This build runs entirely in the browser and saves to `localStorage`, so nobody else can see your data and no real money moves. To go live:
+With the server running, all testers share one copy of the data in Postgres. No real money moves. Before production:
 
-1. **Backend and database:** move `src/domain/actions.ts` to a server (the reducer is already pure, so it ports cleanly) and store data in Postgres or similar.
-2. **Auth:** real phone OTP (for example via Termii or Twilio) instead of the demo code.
+1. **Auth:** real phone OTP (for example via Termii or Twilio) instead of the demo code. Until then, the server trusts the user id the phone sends, and every phone downloads the whole data set. That's fine for staging with demo accounts, but not for real users.
+2. **Database shape:** split the single state row into proper tables (users, jobs, proposals, wallets, ledger) and serve each user only their own data.
 3. **Payments:** hold escrow with a licensed provider such as Paystack or Flutterwave, and send withdrawals through their transfer API.
 4. **Verification:** upload photos to object storage and give admins a review queue. NIN lookup could be automated.
 5. **Admin tools:** supervisor assignment for Premium jobs, dispute review and payouts. The app currently has dashed **Simulate** buttons where these would go.
