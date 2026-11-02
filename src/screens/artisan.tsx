@@ -1,35 +1,59 @@
 import { useState } from 'react';
 import { Avatar, Icon, Picture, ToolIcon } from '../components/art';
-import { BackBar, Calendar, Empty, Notice, PersonRow, PhotoInput, SimButton, StatusTag, TopBar, dayLabel, timeAgo } from '../components/ui';
+import { BackBar, Calendar, Empty, Journey, MediaInput, Notice, PersonRow, SimButton, StatusTag, TopBar, dayLabel, timeAgo } from '../components/ui';
 import { VERIFICATION_ITEMS } from '../domain/actions';
-import { artisanQualifies, completionSplit, formatNaira, misdescribedSplit, rankArtisans } from '../domain/rules';
-import type { Artisan, Company, Job } from '../domain/types';
+import {
+  CLOSED_STATUSES,
+  MATERIALS,
+  artisanQualifies,
+  billableMaterials,
+  completionSplit,
+  customKey,
+  formatNaira,
+  isOnOrAfterDay,
+  linesTotal,
+  misdescribedSplit,
+  rankArtisans,
+} from '../domain/rules';
+import type { Artisan, Company, Job, QuoteLine } from '../domain/types';
 import { useApp } from '../store/store';
-import { History, JobDetails, JobHeader, SplitBox } from './client';
+import { History, JobDetails, JobHeader, MaterialsStatus, QuoteTable, SplitBox } from './client';
 
-const ONGOING: Job['status'][] = ['confirmed', 'in_progress', 'supervisor_check', 'awaiting_client', 'disputed'];
+const firstName = (n: string) => n.split(' ')[0];
 
 function useArtisanJobs() {
   const { state, user } = useApp();
   const me = user as Artisan;
   const open = state.jobs.filter(
-    (j) => j.status === 'open' && (j.invitedArtisanId ? j.invitedArtisanId === me.id : me.categories.includes(j.category)) && !j.proposals.some((p) => p.artisanId === me.id),
+    (j) =>
+      j.status === 'open' &&
+      j.city === me.city &&
+      (j.invitedArtisanId ? j.invitedArtisanId === me.id : me.categories.includes(j.category)) &&
+      !j.noShows.some((x) => x.artisanId === me.id) &&
+      !j.bids.some((b) => b.artisanId === me.id && b.status === 'pending'),
   );
-  const applied = state.jobs.filter((j) => j.proposals.some((p) => p.artisanId === me.id) && j.artisanId !== me.id);
+  const bids = state.jobs.filter((j) => j.bids.some((b) => b.artisanId === me.id) && j.artisanId !== me.id);
   const mine = state.jobs.filter((j) => j.artisanId === me.id);
-  return { me, open, applied, mine };
+  return { me, open, bids, mine };
+}
+
+/** Jobs where today is the start day and the artisan hasn't started yet. */
+export function useStartDayJobs() {
+  const { state, user } = useApp();
+  if (!user || user.role !== 'artisan') return [];
+  return state.jobs.filter((j) => j.artisanId === user.id && j.status === 'ready' && j.scheduledDay && isOnOrAfterDay(j.scheduledDay, Date.now()));
 }
 
 /* ---------------- Artisan home ---------------- */
 export function ArtisanHome() {
   const { state, go } = useApp();
-  const { me, open, applied, mine } = useArtisanJobs();
+  const { me, open, bids, mine } = useArtisanJobs();
   const v = me.verification;
-  const ongoing = mine.filter((j) => ONGOING.includes(j.status));
-  const sameTrade = rankArtisans(Object.values(state.users).filter((u): u is Artisan => u.role === 'artisan' && u.trade === me.trade));
+  const ongoing = mine.filter((j) => !CLOSED_STATUSES.includes(j.status));
+  const sameTrade = rankArtisans(Object.values(state.users).filter((u): u is Artisan => u.role === 'artisan' && u.trade === me.trade && u.city === me.city));
   const rank = sameTrade.findIndex((a) => a.id === me.id) + 1;
   const pct = v.status === 'verified' ? 100 : v.status === 'review' ? 90 : Math.round((Object.keys(v.files).length / VERIFICATION_ITEMS.artisan.length) * 80);
-  const invites = open.filter((j) => j.invitedArtisanId === me.id);
+  const startToday = useStartDayJobs();
   const hour = new Date().getHours();
   return (
     <>
@@ -38,11 +62,23 @@ export function ArtisanHome() {
         <Avatar spec={me.avatar} size={62} />
         <div>
           <div className="hi">{hour < 12 ? 'Good morning,' : hour < 17 ? 'Good afternoon,' : 'Good evening,'}</div>
-          <div className="nm">{me.name.split(' ')[0]}!</div>
-          <div className="sl">More work. Greater opportunities.</div>
+          <div className="nm">{firstName(me.name)}!</div>
+          <div className="sl">{me.kind === 'team' ? `${me.teamName} · team of ${me.teamMembers.length}` : 'More work. Greater opportunities.'}</div>
         </div>
         {v.status === 'verified' ? <span className="vbadge">✓ Verified</span> : <span className="vbadge pending">Not verified</span>}
       </div>
+      {startToday.map((j) => (
+        <button key={j.id} className="startday" onClick={() => go({ name: 'job', jobId: j.id })}>
+          <span className="ic">
+            <Icon name="cal" size={22} />
+          </span>
+          <span>
+            <b>Today: {j.title}</b>
+            <small>Materials are at the client's home. Tap to start work.</small>
+          </span>
+          <Icon name="chev" size={14} />
+        </button>
+      ))}
       {v.status !== 'verified' && (
         <button className="progcard" onClick={() => go({ name: 'verify' })}>
           <span className="ic">
@@ -53,7 +89,7 @@ export function ArtisanHome() {
             <span className="bar">
               <i style={{ width: pct + '%' }} />
             </span>
-            <small>{v.status === 'review' ? 'Allyfe is checking your photos' : 'Clients only see verified artisans'} · {pct}%</small>
+            <small>{v.status === 'review' ? 'Allyfe is checking your photos' : 'Only verified artisans can bid'} · {pct}%</small>
           </span>
           <span className="go">
             <Icon name="chev" size={14} />
@@ -63,9 +99,9 @@ export function ArtisanHome() {
       <div className="tiles">
         {(
           [
-            ['New Jobs', `${open.length} available`, '#16A34A', 'brief', () => go({ name: 'jobs', tab: 'new' })],
-            ['Applied', `${applied.filter((j) => j.status === 'open').length} active`, '#F97316', 'chart', () => go({ name: 'jobs', tab: 'applied' })],
-            ['My Projects', `${ongoing.length} ongoing`, '#7C6CF0', 'cal', () => go({ name: 'jobs', tab: 'mine' })],
+            ['New Jobs', `${open.length} in ${me.city === 'Port Harcourt' ? 'PH' : me.city}`, '#16A34A', 'brief', () => go({ name: 'jobs', tab: 'new' })],
+            ['My Bids', `${bids.filter((j) => j.status === 'open').length} waiting`, '#F97316', 'chart', () => go({ name: 'jobs', tab: 'bids' })],
+            ['Projects', `${ongoing.length} ongoing`, '#7C6CF0', 'cal', () => go({ name: 'jobs', tab: 'mine' })],
             ['Earnings', formatNaira(state.wallets[me.id] ?? 0), '#F59E0B', 'wallet', () => go({ name: 'wallet' })],
           ] as const
         ).map(([t, s, c, ic, fn]) => (
@@ -78,26 +114,20 @@ export function ArtisanHome() {
           </button>
         ))}
       </div>
-      {invites.length > 0 && (
-        <>
-          <h3>Booked for you</h3>
-          <div className="list">{invites.map((j) => <JobRec key={j.id} job={j} />)}</div>
-        </>
-      )}
       {ongoing.length > 0 && (
         <>
-          <h3>Your active jobs</h3>
+          <h3>Your projects</h3>
           <div className="list">{ongoing.map((j) => <MyJobCard key={j.id} job={j} />)}</div>
         </>
       )}
-      <button className="rep mt14" onClick={() => go({ name: 'composer' })}>
+      <button className="rep mt14" onClick={() => go({ name: 'profileEdit' })}>
         <span className="ic">
           <Icon name="trophy" size={20} />
         </span>
         <span>
-          <b>Build your reputation</b>
+          <b>Your reputation</b>
           <small>
-            ★ {me.rating.toFixed(1)} from {me.ratingCount} clients · #{rank} {me.trade.toLowerCase()} in Port Harcourt. Post your work to get seen.
+            ★ {me.rating.toFixed(2)} from {me.ratingCount} ratings · #{rank} {me.trade.toLowerCase()} in {me.city}. Manage your team and apprentices.
           </small>
         </span>
         <span className="go">
@@ -117,12 +147,14 @@ export function ArtisanHome() {
         </span>
       </button>
       <h3>
-        Job recommendations
+        New jobs near you
         <button onClick={() => go({ name: 'jobs', tab: 'new' })}>See all</button>
       </h3>
       <div className="list">
-        {open.filter((j) => !j.invitedArtisanId).slice(0, 2).map((j) => <JobRec key={j.id} job={j} />)}
-        {!open.length && <Empty title="No new jobs right now">We'll alert you when a client posts in your trade.</Empty>}
+        {open.slice(0, 3).map((j) => (
+          <JobRec key={j.id} job={j} />
+        ))}
+        {!open.length && <Empty title="No new jobs right now">We'll alert you when a client in {me.city} posts a job in your trade.</Empty>}
       </div>
     </>
   );
@@ -134,7 +166,7 @@ function JobRec({ job: j }: { job: Job }) {
   return (
     <button className="card jobrec" onClick={() => go({ name: 'job', jobId: j.id })}>
       <div className="ph">
-        <Picture src={j.photos[0] ?? 'room'} />
+        <Picture src={j.media.find((m) => !m.startsWith('data:video/')) ?? 'room'} />
       </div>
       <div className="grow">
         <div className="tt">
@@ -145,11 +177,14 @@ function JobRec({ job: j }: { job: Job }) {
           <Icon name="pin" size={12} className="orange" />
           {client.area.split(',')[0]} · {j.tier}
         </div>
-        <div className="price">{formatNaira(j.deposit)} held</div>
-        <div className="chips">
+        <p className="small m0 clamp2">{j.desc}</p>
+        <div className="chips mt4">
           <span className="chip">{j.category}</span>
-          {j.invitedArtisanId && <span className="chip hot">Booked for you</span>}
-          {j.proposals.length > 0 && <span className="chip">{j.proposals.length} proposal{j.proposals.length > 1 ? 's' : ''}</span>}
+          {j.invitedArtisanId && <span className="chip hot">Requested you</span>}
+          {j.deliveredMaterials.length > 0 && <span className="chip hot">Replacement · materials on site</span>}
+          <span className="chip">
+            {j.bids.filter((b) => b.status === 'pending').length} bid{j.bids.filter((b) => b.status === 'pending').length === 1 ? '' : 's'}
+          </span>
         </div>
       </div>
     </button>
@@ -167,7 +202,7 @@ function MyJobCard({ job: j }: { job: Job }) {
       <div className="grow">
         <b className="t14">{j.title}</b>
         <div className="small">
-          {c.name.split(' ')[0]} · {j.tier} · {formatNaira(j.agreedAmount ?? j.deposit)}
+          {firstName(c.name)} · {j.scheduledDay ? dayLabel(j.scheduledDay) : ''} · fee {formatNaira(j.serviceFee ?? 0)}
         </div>
         <StatusTag job={j} artisanView />
       </div>
@@ -177,9 +212,9 @@ function MyJobCard({ job: j }: { job: Job }) {
 }
 
 /* ---------------- Jobs board ---------------- */
-export function ArtisanJobs({ tab = 'new' }: { tab?: 'new' | 'applied' | 'mine' }) {
+export function ArtisanJobs({ tab = 'new' }: { tab?: 'new' | 'bids' | 'mine' }) {
   const { go } = useApp();
-  const { me, open, applied, mine } = useArtisanJobs();
+  const { me, open, bids, mine } = useArtisanJobs();
   const [t, setT] = useState(tab);
   return (
     <>
@@ -189,7 +224,7 @@ export function ArtisanJobs({ tab = 'new' }: { tab?: 'new' | 'applied' | 'mine' 
         {(
           [
             ['new', 'New jobs'],
-            ['applied', 'Applied'],
+            ['bids', 'My bids'],
             ['mine', 'My projects'],
           ] as const
         ).map(([k, l]) => (
@@ -200,10 +235,16 @@ export function ArtisanJobs({ tab = 'new' }: { tab?: 'new' | 'applied' | 'mine' 
       </div>
       {t === 'new' && (
         <>
-          <p className="sub">Matched to your trade. Clients have already paid into Allyfe.</p>
+          <p className="sub">
+            {me.trade} jobs in {me.city}. Read each one carefully, then send your quotation.
+          </p>
           {me.verification.status !== 'verified' && (
             <Notice>
-              Finish <button className="link" onClick={() => go({ name: 'verify' })}>verification</button> to apply for jobs.
+              Finish{' '}
+              <button className="link" onClick={() => go({ name: 'verify' })}>
+                verification
+              </button>{' '}
+              to bid on jobs.
             </Notice>
           )}
           <div className="list">
@@ -214,28 +255,27 @@ export function ArtisanJobs({ tab = 'new' }: { tab?: 'new' | 'applied' | 'mine' 
           </div>
         </>
       )}
-      {t === 'applied' && (
+      {t === 'bids' && (
         <div className="list">
-          {applied.map((j) => {
-            const p = j.proposals.find((x) => x.artisanId === me.id)!;
+          {bids.map((j) => {
+            const b = j.bids.filter((x) => x.artisanId === me.id).slice(-1)[0];
+            const waiting = b.status === 'pending' && j.status === 'open';
             return (
               <button key={j.id} className="card jobrec" onClick={() => go({ name: 'applied', jobId: j.id })}>
                 <div className="ph">
-                  <Picture src={j.photos[0] ?? 'room'} />
+                  <Picture src={j.media[0] ?? 'room'} />
                 </div>
                 <div className="grow">
                   <b className="t13">{j.title}</b>
                   <div className="small">
-                    You {p.kind === 'apply' ? 'applied at' : 'proposed'} {formatNaira(p.amount)} · {timeAgo(p.at)}
+                    Your bid {formatNaira(linesTotal(b.lines) + b.serviceFee)} · {timeAgo(b.at)}
                   </div>
-                  <span className={'tag mt6 ' + (p.status === 'pending' && j.status === 'open' ? 'blue' : 'grey')}>
-                    {p.status === 'pending' && j.status === 'open' ? 'Waiting for client' : j.status === 'cancelled' ? 'Job cancelled' : 'Client chose someone else'}
-                  </span>
+                  <span className={'tag mt6 ' + (waiting ? 'blue' : 'grey')}>{waiting ? 'Waiting for client' : j.status === 'cancelled' ? 'Job cancelled' : 'Client chose someone else'}</span>
                 </div>
               </button>
             );
           })}
-          {!applied.length && <Empty title="No applications yet">Open a job and tap Apply or Send proposal.</Empty>}
+          {!bids.length && <Empty title="No bids yet">Open a job and send your quotation.</Empty>}
         </div>
       )}
       {t === 'mine' && (
@@ -243,7 +283,7 @@ export function ArtisanJobs({ tab = 'new' }: { tab?: 'new' | 'applied' | 'mine' 
           {mine.map((j) => (
             <MyJobCard key={j.id} job={j} />
           ))}
-          {!mine.length && <Empty title="No projects yet">When a client confirms you, the job appears here.</Empty>}
+          {!mine.length && <Empty title="No projects yet">When a client accepts your bid, the job appears here.</Empty>}
         </div>
       )}
     </>
@@ -255,78 +295,95 @@ export function ArtisanJob({ job: j }: { job: Job }) {
   const { state, user, dispatch, go } = useApp();
   const me = user as Artisan;
   const client = state.users[j.clientId];
+  const cf = firstName(client.name);
   const mine = j.artisanId === me.id;
-  const myProposal = j.proposals.find((p) => p.artisanId === me.id);
+  const myBid = j.bids.filter((b) => b.artisanId === me.id).slice(-1)[0];
 
   if (!mine) {
-    const can = me.verification.status === 'verified' && artisanQualifies(me, j.tier);
+    const missed = j.noShows.some((x) => x.artisanId === me.id);
+    const can = artisanQualifies(me, j) && !missed;
     return (
       <>
         <BackBar label="Jobs" />
         <JobHeader job={j} />
         <PersonRow user={client} sub={`Client · ${client.area.split(',')[0]} · posted ${timeAgo(j.createdAt)} ago`} />
-        <div className="card money mt12">
-          <div>
-            <span>Client's budget, held by Allyfe</span>
-            <b>{formatNaira(j.deposit)}</b>
-          </div>
-          <div>
-            <span>Proposals so far</span>
-            <span>{j.proposals.length}</span>
-          </div>
-        </div>
         <JobDetails job={j} hideAddress />
+        {j.deliveredMaterials.length > 0 && (
+          <>
+            <h3>Already at the client's home</h3>
+            <p className="small m0 mb8">The previous artisan didn't finish. These materials are on site and are taken off your quotation automatically.</p>
+            <div className="card">
+              <QuoteTable lines={j.deliveredMaterials} showTotal={false} />
+            </div>
+          </>
+        )}
         {j.invitedArtisanId === me.id && (
           <Notice tone="info" icon="i">
-            {client.name.split(' ')[0]} picked you from your profile. Apply at their price or propose your own.
+            {cf} picked you from your profile.
           </Notice>
         )}
-        {myProposal ? (
+        {myBid?.status === 'pending' ? (
           <button className="btn secondary mt14" onClick={() => go({ name: 'applied', jobId: j.id })}>
-            View your application
+            View your bid
           </button>
         ) : j.status !== 'open' ? (
-          <Notice>This job is no longer taking proposals.</Notice>
+          <Notice>This job is no longer taking bids.</Notice>
         ) : !can ? (
-          <Notice>
-            {me.verification.status !== 'verified' ? 'Finish verification to apply.' : `${j.tier} jobs need a rating of 4.7★ or more.`}
-          </Notice>
+          <Notice>{missed ? 'You missed this job before, so you cannot bid on it again.' : me.verification.status !== 'verified' ? 'Finish verification to bid.' : `${j.tier} jobs need a rating of 4.7★ or more.`}</Notice>
         ) : (
-          <div className="stack mt14">
-            <button className="btn primary" onClick={() => go({ name: 'proposal', jobId: j.id, kind: 'apply' })}>
-              Apply at {formatNaira(j.deposit)}
-            </button>
-            <button className="btn secondary" onClick={() => go({ name: 'proposal', jobId: j.id, kind: 'propose' })}>
-              Send a proposal with my price
-            </button>
-            {j.invitedArtisanId === me.id && (
-              <button className="btn concern" onClick={() => dispatch({ type: 'declineInvite', jobId: j.id }, 'Declined. The job is now open to others.') && go({ name: 'jobs' })}>
-                I can't take this job
-              </button>
-            )}
-          </div>
+          <button className="btn primary mt14" onClick={() => go({ name: 'quote', jobId: j.id })}>
+            Make a quotation
+          </button>
         )}
       </>
     );
   }
 
-  const amount = j.agreedAmount ?? j.deposit;
-  const half = misdescribedSplit(amount).artisan;
+  const dayCame = j.scheduledDay ? isOnOrAfterDay(j.scheduledDay, Date.now()) : false;
+  const half = misdescribedSplit(j.serviceFee ?? 0).artisan;
   const jobRentals = state.rentals.filter((r) => r.jobId === j.id);
   let focus: React.ReactNode = null;
   switch (j.status) {
-    case 'confirmed':
+    case 'awarded':
       focus = (
         <div className="focus">
-          <h4>When you arrive, check the job</h4>
-          <p>Compare the work with the client's description and photos before you start.</p>
-          <button className="btn primary" onClick={() => dispatch({ type: 'startWork', jobId: j.id }, 'Work started.')}>
-            Job matches. Start work
+          <h4>{j.materialsOrder?.status === 'accepted' ? `${state.users[j.materialsOrder.vendorId!].name} is buying the materials` : 'Waiting for a vendor to take the materials list'}</h4>
+          <p>You start on {dayLabel(j.scheduledDay!)}. We'll tell you when the materials reach the client.</p>
+        </div>
+      );
+      break;
+    case 'materials_on_the_way':
+      focus = (
+        <div className="focus">
+          <h4>Materials are on the way</h4>
+          <p>
+            Waybill: {j.materialsOrder!.waybill}. You start on {dayLabel(j.scheduledDay!)}.
+          </p>
+        </div>
+      );
+      break;
+    case 'ready':
+      focus = dayCame ? (
+        <div className="focus warn">
+          <h4>Today is the start day</h4>
+          <p>
+            Go to {j.addr}. Check the job against {cf}'s description and photos, then tap <b>Work started</b>.
+          </p>
+          <button className="btn primary" onClick={() => dispatch({ type: 'startWork', jobId: j.id }, `${cf} has been told you started.`)}>
+            Work started
           </button>
-          <button className="btn concern" onClick={() => confirm(`Mark this job not as described? You'll be paid ${formatNaira(half)} for the visit and the job ends.`) && dispatch({ type: 'flagMisdescribed', jobId: j.id })}>
+          <button className="btn concern" onClick={() => confirm(`Mark this job not as described? You'll get ${formatNaira(half)} for the visit and the job ends.`) && dispatch({ type: 'flagMisdescribed', jobId: j.id })}>
             Job is not as described
           </button>
-          <p className="small">Marking it not as described pays you {formatNaira(half)} (50% of the deposit) for your visit.</p>
+          <p className="small">Not as described pays you {formatNaira(half)} (50% of your fee) for the visit.</p>
+        </div>
+      ) : (
+        <div className="focus">
+          <h4>Materials are at the client's home</h4>
+          <p>
+            Your start day is <b>{dayLabel(j.scheduledDay!)}</b>. The Work started button appears that day. Address: {j.addr}.
+          </p>
+          <SimButton onClick={() => dispatch({ type: 'demoStartDay', jobId: j.id })}>it's the scheduled day</SimButton>
         </div>
       );
       break;
@@ -334,7 +391,7 @@ export function ArtisanJob({ job: j }: { job: Job }) {
       focus = (
         <div className="focus">
           <h4>Work in progress</h4>
-          <p>Need equipment? Rent it from a verified tool company. The rental is paid from this job when the client confirms.</p>
+          <p>Need equipment? Rent it from a verified tool company. The rental comes out of your service fee when {cf} confirms.</p>
           {jobRentals.map((r) => (
             <div className="small" key={r.id}>
               • {state.tools.find((t) => t.id === r.toolId)?.name} from {state.users[r.companyId].name}: <b className="ink">{r.status}</b>
@@ -343,8 +400,8 @@ export function ArtisanJob({ job: j }: { job: Job }) {
           <button className="btn secondary" onClick={() => go({ name: 'store', jobId: j.id })}>
             Rent a tool for this job
           </button>
-          <button className="btn primary" onClick={() => dispatch({ type: 'markDone', jobId: j.id }, `${client.name.split(' ')[0]} has been asked to check the work.`)}>
-            Mark work as done
+          <button className="btn primary" onClick={() => dispatch({ type: 'finishWork', jobId: j.id }, `${cf} has been asked to check the work.`)}>
+            Work finished
           </button>
         </div>
       );
@@ -353,8 +410,8 @@ export function ArtisanJob({ job: j }: { job: Job }) {
     case 'awaiting_client':
       focus = (
         <div className="focus warn">
-          <h4>Waiting for {j.status === 'supervisor_check' ? 'the supervisor' : `${client.name.split(' ')[0]} to confirm`}</h4>
-          <p>When {client.name.split(' ')[0]} taps Work completed, the money is paid out like this:</p>
+          <h4>Waiting for {j.status === 'supervisor_check' ? 'the supervisor' : `${cf} to tap Job done`}</h4>
+          <p>Your wallet is credited when {cf} confirms:</p>
           <SplitBox split={completionSplit(j, state.rentals)} job={j} />
           {j.status === 'supervisor_check' && <SimButton onClick={() => dispatch({ type: 'supervisorApprove', jobId: j.id })}>supervisor approves the work</SimButton>}
         </div>
@@ -364,7 +421,7 @@ export function ArtisanJob({ job: j }: { job: Job }) {
       focus = (
         <div className="focus good">
           <h4>Paid to your wallet</h4>
-          <p>{j.review ? `${client.name.split(' ')[0]} rated you ★ ${j.review.stars}.` : `${client.name.split(' ')[0]} can now rate you.`}</p>
+          <p>{j.rating ? `${cf} rated you ★ ${j.rating.stars}.` : `${cf} can now rate you.`}</p>
           <button className="btn secondary" onClick={() => go({ name: 'wallet' })}>
             Open wallet
           </button>
@@ -375,121 +432,230 @@ export function ArtisanJob({ job: j }: { job: Job }) {
       focus = (
         <div className="focus bad">
           <h4>Visit paid</h4>
-          <p>{formatNaira(half)} (50% of the deposit) is in your wallet for the visit. The rest went back to the client.</p>
+          <p>{formatNaira(half)} (50% of your fee) is in your wallet for the visit.</p>
         </div>
       );
       break;
-    case 'disputed':
+    default:
       focus = (
         <div className="focus bad">
-          <h4>Allyfe is reviewing</h4>
-          <p>An admin will contact you and the client.</p>
+          <h4>{j.status === 'disputed' ? 'Allyfe is reviewing' : 'This job is closed'}</h4>
+          <p>{j.status === 'disputed' ? 'An admin will contact you and the client.' : 'Contact Allyfe support if you have questions.'}</p>
         </div>
       );
-      break;
   }
   return (
     <>
       <BackBar label="Jobs" />
       <JobHeader job={j} artisanView />
-      <PersonRow user={client} sub={`Client · ${formatNaira(amount)} agreed`} />
+      <Journey job={j} />
+      <PersonRow user={client} sub={`Client · ${client.phone}`} />
       <div className="mt14">{focus}</div>
+      <MaterialsStatus job={j} />
+      {myBid && (
+        <>
+          <h3>Your accepted quotation</h3>
+          <div className="card">
+            <QuoteTable lines={myBid.lines} serviceFee={myBid.serviceFee} />
+          </div>
+        </>
+      )}
       <JobDetails job={j} />
       <History job={j} />
     </>
   );
 }
 
-/* ---------------- Proposal ---------------- */
-export function ProposalForm({ jobId, kind }: { jobId: string; kind: 'apply' | 'propose' }) {
+/* ---------------- Quotation ---------------- */
+export function QuoteForm({ jobId }: { jobId: string }) {
   const { state, dispatch, go } = useApp();
   const j = state.jobs.find((x) => x.id === jobId);
-  const [amount, setAmount] = useState(String(j?.deposit ?? ''));
+  const [lines, setLines] = useState<QuoteLine[]>([]);
+  const [pick, setPick] = useState('');
+  const [pickQty, setPickQty] = useState('1');
+  const [custom, setCustom] = useState({ name: '', price: '', qty: '1' });
+  const [fee, setFee] = useState('');
+  const [day, setDay] = useState<string[]>(j?.preferredDays.slice(0, 1) ?? []);
   const [message, setMessage] = useState('');
-  const [day, setDay] = useState<string[]>(j?.schedule.days.slice(0, 1) ?? []);
   if (!j) return <BackBar />;
-  const flexible = j.schedule.mode === 'Flexible';
-  const amt = kind === 'apply' ? j.deposit : Number(amount.replace(/\D/g, '')) || 0;
+  const catalog = MATERIALS[j.category];
+  const num = (v: string) => Number(v.replace(/[^\d]/g, '')) || 0;
+  const add = (l: QuoteLine) => {
+    const i = lines.findIndex((x) => x.key === l.key);
+    if (i >= 0) setLines(lines.map((x, k) => (k === i ? { ...x, qty: x.qty + l.qty } : x)));
+    else setLines([...lines, l]);
+  };
+  const setQty = (i: number, qty: number) => setLines(qty <= 0 ? lines.filter((_, k) => k !== i) : lines.map((x, k) => (k === i ? { ...x, qty } : x)));
+  const { billable, covered } = billableMaterials(lines, j.deliveredMaterials);
+  const materials = linesTotal(billable);
+  const serviceFee = num(fee);
+
   return (
     <>
       <BackBar label="Job" />
-      <h2>{kind === 'apply' ? 'Apply for this job' : 'Send a proposal'}</h2>
-      <p className="sub">{j.title}</p>
-      {kind === 'propose' ? (
-        <>
-          <label className="f" htmlFor="pamt">
-            Your price <em>(client's budget: {formatNaira(j.deposit)})</em>
+      <h2>Your quotation</h2>
+      <p className="sub">
+        {j.title}. List the materials you need, then set your service fee. The client sees every line.
+      </p>
+
+      <h3>Materials</h3>
+      <div className="card">
+        <label className="f mt0" htmlFor="mpick">
+          From the {j.category.toLowerCase()} list
+        </label>
+        <select id="mpick" value={pick} onChange={(e) => setPick(e.target.value)}>
+          <option value="">Choose a material…</option>
+          {catalog.map((c) => (
+            <option key={c.key} value={c.key}>
+              {c.name} · {formatNaira(c.price)}/{c.unit}
+            </option>
+          ))}
+        </select>
+        <div className="row mt8">
+          <input type="text" inputMode="numeric" aria-label="Quantity" value={pickQty} onChange={(e) => setPickQty(e.target.value)} />
+          <button
+            className="btn secondary"
+            disabled={!pick}
+            onClick={() => {
+              const c = catalog.find((x) => x.key === pick)!;
+              add({ key: c.key, name: c.name, unit: c.unit, unitPrice: c.price, qty: Math.max(1, num(pickQty)) });
+              setPick('');
+              setPickQty('1');
+            }}
+          >
+            Add
+          </button>
+        </div>
+        <details className="mt10">
+          <summary className="small w600">Material not on the list?</summary>
+          <label className="f" htmlFor="cname">
+            Material name
           </label>
-          <input id="pamt" type="text" inputMode="numeric" value={amount} onChange={(e) => setAmount(e.target.value)} />
-          {amt > 0 && amt !== j.deposit && (
-            <p className="small mt6">{amt > j.deposit ? `${formatNaira(amt - j.deposit)} above` : `${formatNaira(j.deposit - amt)} below`} the client's budget. They'll see the difference before confirming.</p>
-          )}
-        </>
-      ) : (
-        <div className="card money">
-          <div>
-            <span>You'll be paid</span>
-            <b>{formatNaira(j.deposit)}</b>
+          <input id="cname" type="text" placeholder="e.g. Silicone sealant" value={custom.name} onChange={(e) => setCustom({ ...custom, name: e.target.value })} />
+          <div className="row">
+            <div>
+              <label className="f" htmlFor="cprice">
+                Cost price (₦ each)
+              </label>
+              <input id="cprice" type="text" inputMode="numeric" value={custom.price} onChange={(e) => setCustom({ ...custom, price: e.target.value })} />
+            </div>
+            <div>
+              <label className="f" htmlFor="cqty">
+                Quantity
+              </label>
+              <input id="cqty" type="text" inputMode="numeric" value={custom.qty} onChange={(e) => setCustom({ ...custom, qty: e.target.value })} />
+            </div>
           </div>
-          <div className="small">Already held by Allyfe. Paid to your wallet when the client confirms the work.</div>
+          <button
+            className="btn secondary mt8"
+            disabled={!custom.name.trim() || !num(custom.price)}
+            onClick={() => {
+              add({ key: customKey(custom.name), name: custom.name.trim(), unit: 'item', unitPrice: num(custom.price), qty: Math.max(1, num(custom.qty)) });
+              setCustom({ name: '', price: '', qty: '1' });
+            }}
+          >
+            Add this material
+          </button>
+        </details>
+      </div>
+
+      {lines.length > 0 && (
+        <div className="card mt10 qlines">
+          {lines.map((l, i) => (
+            <div className="qline" key={l.key}>
+              <div className="grow">
+                <b className="t13">{l.name}</b>
+                <div className="small">
+                  {formatNaira(l.unitPrice)} each{l.key.startsWith('custom:') ? ' · your price' : ''}
+                </div>
+              </div>
+              <div className="stepper">
+                <button onClick={() => setQty(i, l.qty - 1)} aria-label={`Less ${l.name}`}>
+                  −
+                </button>
+                <span>{l.qty}</span>
+                <button onClick={() => setQty(i, l.qty + 1)} aria-label={`More ${l.name}`}>
+                  +
+                </button>
+              </div>
+              <b className="t13 nowrap w72 tr">{formatNaira(l.unitPrice * l.qty)}</b>
+            </div>
+          ))}
         </div>
       )}
-      <label className="f">{flexible ? 'Pick one of the client’s days' : 'When can you start?'}</label>
-      <Calendar selected={day} onChange={setDay} max={1} allowed={flexible ? j.schedule.days : undefined} />
-      <label className="f" htmlFor="pmsg">
-        Message to the client {kind === 'apply' && <em>(optional)</em>}
+      {covered.length > 0 && (
+        <Notice tone="info" icon="i">
+          {covered.map((c) => `${c.qty} × ${c.name}`).join(', ')} {covered.length === 1 ? 'is' : 'are'} already at the client's home, so {covered.length === 1 ? "it isn't" : "they aren't"} charged.
+        </Notice>
+      )}
+
+      <h3>Service fee</h3>
+      <input type="text" inputMode="numeric" aria-label="Service fee" placeholder="₦ your labour for the whole job" value={fee} onChange={(e) => setFee(e.target.value)} />
+
+      <label className="f">Which of the client's days?</label>
+      <Calendar selected={day} onChange={setDay} max={1} allowed={j.preferredDays} />
+
+      <label className="f" htmlFor="qmsg">
+        Message to the client <em>(optional)</em>
       </label>
-      <textarea
-        id="pmsg"
-        placeholder={kind === 'apply' ? 'Say hello and mention similar jobs you have done.' : "What's included in your price? Materials, labour, timeline…"}
-        value={message}
-        onChange={(e) => setMessage(e.target.value)}
-        maxLength={600}
-      />
+      <textarea id="qmsg" placeholder="What's included, how long it will take, anything the client should prepare…" value={message} onChange={(e) => setMessage(e.target.value)} maxLength={600} />
+
+      <div className="card money mt14">
+        <div>
+          <span>Materials{billable.length ? ` (${billable.length} item${billable.length > 1 ? 's' : ''})` : ''}</span>
+          <b>{formatNaira(materials)}</b>
+        </div>
+        <div>
+          <span>Service fee</span>
+          <b>{formatNaira(serviceFee)}</b>
+        </div>
+        <div className="tot">
+          <span>Your bid</span>
+          <span>{formatNaira(materials + serviceFee)}</span>
+        </div>
+      </div>
       <button
         className="btn primary mt14"
         onClick={() => {
-          if (dispatch({ type: 'submitProposal', jobId: j.id, kind, amount: amt, message, startDay: day[0] })) go({ name: 'applied', jobId: j.id });
+          if (dispatch({ type: 'submitBid', jobId: j.id, bid: { lines, serviceFee, day: day[0] ?? '', message } }, 'Bid sent.')) go({ name: 'applied', jobId: j.id });
         }}
       >
-        {kind === 'apply' ? `Apply at ${formatNaira(j.deposit)}` : `Send proposal for ${formatNaira(amt)}`}
+        Bid {formatNaira(materials + serviceFee)}
       </button>
     </>
   );
 }
 
-/* ---------------- Applied ---------------- */
+/* ---------------- Bid sent ---------------- */
 export function Applied({ jobId }: { jobId: string }) {
   const { state, user, go } = useApp();
   const j = state.jobs.find((x) => x.id === jobId);
-  const p = j?.proposals.find((x) => x.artisanId === user!.id);
-  if (!j || !p) return <BackBar />;
+  const b = j?.bids.filter((x) => x.artisanId === user!.id).slice(-1)[0];
+  if (!j || !b) return <BackBar />;
   const client = state.users[j.clientId];
   const accepted = j.artisanId === user!.id;
   return (
     <div className="success">
-      <span className={'success-ic' + (p.status === 'declined' ? ' grey' : '')}>
+      <span className={'success-ic' + (b.status === 'declined' ? ' grey' : '')}>
         <Icon name="check" size={40} />
       </span>
-      <h2>{accepted ? 'You got the job!' : p.status === 'declined' ? 'Not this time' : p.kind === 'apply' ? 'Application sent' : 'Proposal sent'}</h2>
+      <h2>{accepted ? 'You got the job!' : b.status === 'declined' ? 'Not this time' : 'Bid sent'}</h2>
       <p className="sub">
         {accepted
-          ? `${client.name.split(' ')[0]} confirmed you. The address is now in the job.`
-          : p.status === 'declined'
-            ? `${client.name.split(' ')[0]} chose another artisan. Keep your rating high and keep applying.`
-            : `${client.name.split(' ')[0]} will see your profile, rating and ${p.kind === 'apply' ? 'application' : 'price'}. We'll alert you when they decide.`}
+          ? `${firstName(client.name)} accepted your bid and paid into Allyfe. A vendor will deliver the materials.`
+          : b.status === 'declined'
+            ? `${firstName(client.name)} chose another artisan. Keep your rating high and keep bidding.`
+            : `${firstName(client.name)} will compare your quotation, rating and day with other bids. We'll alert you when they decide.`}
       </p>
-      <div className="card summary-lite">
+      <div className="card">
         <b>{j.title}</b>
-        <div className="small">
-          {p.kind === 'apply' ? 'Applied at' : 'Your price'}: <b className="ink">{formatNaira(p.amount)}</b>
-          {p.startDay && ` · ${dayLabel(p.startDay)}`}
-        </div>
-        {p.message && <p className="t13 m6">“{p.message}”</p>}
+        <div className="small mb8">Start day: {dayLabel(b.day)}</div>
+        <QuoteTable lines={b.lines} serviceFee={b.serviceFee} />
+        {b.message && <p className="t13 m6">“{b.message}”</p>}
       </div>
       {accepted ? (
         <button className="btn primary mt14" onClick={() => go({ name: 'job', jobId: j.id })}>
-          Open job
+          Open project
         </button>
       ) : (
         <button className="btn primary mt14" onClick={() => go({ name: 'jobs', tab: 'new' })}>
@@ -503,7 +669,110 @@ export function Applied({ jobId }: { jobId: string }) {
   );
 }
 
-/* ---------------- Verification (artisan + company) ---------------- */
+/* ---------------- Profile, team & apprentices ---------------- */
+export function ProfileEdit() {
+  const { user, dispatch, go } = useApp();
+  const a = user as Artisan;
+  const [kind, setKind] = useState(a.kind);
+  const [teamName, setTeamName] = useState(a.teamName ?? '');
+  const [members, setMembers] = useState<string[]>(a.teamMembers.length ? a.teamMembers : [a.name, '']);
+  const [bio, setBio] = useState(a.bio);
+  const [ap, setAp] = useState({ name: '', phone: '', photo: '' });
+  return (
+    <>
+      <BackBar />
+      <h2>Profile & team</h2>
+      <p className="sub">How clients see you.</p>
+      <label className="f">I work as</label>
+      <div className="seg two">
+        <button className={kind === 'individual' ? 'on' : ''} onClick={() => setKind('individual')}>
+          An individual
+        </button>
+        <button className={kind === 'team' ? 'on' : ''} onClick={() => setKind('team')}>
+          A construction team
+        </button>
+      </div>
+      {kind === 'team' && (
+        <div className="card mt12">
+          <label className="f mt0" htmlFor="tname">
+            Team name
+          </label>
+          <input id="tname" type="text" placeholder="e.g. Uche Woodworks" value={teamName} onChange={(e) => setTeamName(e.target.value)} />
+          <label className="f">Team members</label>
+          <div className="stack">
+            {members.map((m, i) => (
+              <div className="row" key={i}>
+                <input type="text" aria-label={`Member ${i + 1}`} placeholder={`Member ${i + 1}`} value={m} onChange={(e) => setMembers(members.map((x, k) => (k === i ? e.target.value : x)))} />
+                {members.length > 2 && (
+                  <button className="btn secondary sm flex0" onClick={() => setMembers(members.filter((_, k) => k !== i))} aria-label="Remove member">
+                    ×
+                  </button>
+                )}
+              </div>
+            ))}
+          </div>
+          <button className="btn secondary sm mt8" onClick={() => setMembers([...members, ''])}>
+            + Add member
+          </button>
+        </div>
+      )}
+      <label className="f" htmlFor="bio">
+        About you
+      </label>
+      <textarea id="bio" value={bio} onChange={(e) => setBio(e.target.value)} maxLength={300} />
+      <button className="btn primary mt12" onClick={() => dispatch({ type: 'updateProfile', kind, teamName, teamMembers: members, bio }, 'Profile saved.')}>
+        Save profile
+      </button>
+
+      <h3>Apprentices</h3>
+      <p className="small m0 mb8">When an apprentice later joins Allyfe as an artisan with the same phone number, your work shows on their profile as collaborated projects.</p>
+      <div className="list">
+        {a.apprentices.map((x) => (
+          <div className="card up" key={x.id}>
+            <span className="th done">
+              <Picture src={x.photo} alt={x.name} />
+            </span>
+            <div>
+              <b>{x.name}</b>
+              <div className="small">
+                {x.phone} · since {new Date(x.addedAt).toLocaleDateString('en-GB', { month: 'short', year: 'numeric' })}
+              </div>
+            </div>
+            <button className="btn secondary sm" onClick={() => confirm(`Remove ${x.name}?`) && dispatch({ type: 'removeApprentice', apprenticeId: x.id })}>
+              Remove
+            </button>
+          </div>
+        ))}
+        {!a.apprentices.length && <Empty title="No apprentices yet">Add the people learning the trade under you.</Empty>}
+      </div>
+      <div className="card mt12">
+        <b className="t14">Add an apprentice</b>
+        <div className="ap-add mt8">
+          <MediaInput label="Apprentice photo" onMedia={(photo) => setAp({ ...ap, photo })} className={'th' + (ap.photo ? ' done' : '')}>
+            {ap.photo ? <Picture src={ap.photo} /> : <Icon name="camera" size={20} />}
+          </MediaInput>
+          <div className="grow stack">
+            <input type="text" aria-label="Apprentice name" placeholder="Full name" value={ap.name} onChange={(e) => setAp({ ...ap, name: e.target.value })} />
+            <input type="tel" aria-label="Apprentice phone" placeholder="Phone number" value={ap.phone} onChange={(e) => setAp({ ...ap, phone: e.target.value })} />
+          </div>
+        </div>
+        <button
+          className="btn primary mt10"
+          onClick={() => {
+            if (dispatch({ type: 'addApprentice', name: ap.name, phone: ap.phone, photo: ap.photo }, `${ap.name.trim()} added.`)) setAp({ name: '', phone: '', photo: '' });
+          }}
+        >
+          Add apprentice
+        </button>
+      </div>
+      <button className="btn secondary mt14" onClick={() => go({ name: 'pro', id: a.id })}>
+        See my public profile
+      </button>
+    </>
+  );
+}
+
+/* ---------------- Verification (artisan, tool company, vendor) ---------------- */
 export function Verify() {
   const { user, dispatch } = useApp();
   if (!user || user.role === 'client') return null;
@@ -517,8 +786,10 @@ export function Verify() {
       <h2>{user.role === 'artisan' ? 'Photo verification' : `Verify ${user.name}`}</h2>
       <p className="sub">
         {user.role === 'artisan'
-          ? 'Clients only see verified artisans. Upload clear photos. Allyfe checks them within 24 hours.'
-          : 'Artisans only rent from verified companies. Upload clear pictures of each document.'}
+          ? 'Only verified artisans can bid. Upload clear photos; blurry ones are rejected. Allyfe checks them within 24 hours.'
+          : user.role === 'vendor'
+            ? 'Only verified vendors receive materials requests. Upload clear pictures of each document.'
+            : 'Artisans only rent from verified companies. Upload clear pictures of each document.'}
       </p>
       <div className="uploads">
         {items.map((it) => {
@@ -529,9 +800,9 @@ export function Verify() {
               {locked ? (
                 <span className={'th' + (f ? ' done' : '')}>{thumb}</span>
               ) : (
-                <PhotoInput label={`Upload ${it.title}`} onPhoto={(img) => dispatch({ type: 'addVerificationFile', key: it.key, image: img }, 'Photo added.')} className={'th' + (f ? ' done' : '')}>
+                <MediaInput label={`Upload ${it.title}`} onMedia={(img) => dispatch({ type: 'addVerificationFile', key: it.key, image: img }, 'Photo added.')} className={'th' + (f ? ' done' : '')}>
                   {thumb}
-                </PhotoInput>
+                </MediaInput>
               )}
               <div>
                 <b>{it.title}</b>
@@ -544,7 +815,7 @@ export function Verify() {
       </div>
       {v.status === 'verified' ? (
         <Notice tone="info" icon="✓">
-          {user.role === 'artisan' ? 'You are verified. Clients can find and book you.' : 'Your company is verified. Your tools are visible in the Tool Store.'}
+          You are verified.
         </Notice>
       ) : v.status === 'review' ? (
         <>
@@ -558,10 +829,7 @@ export function Verify() {
           <button className="btn primary mt14" disabled={!items.every((i) => v.files[i.key])} onClick={() => dispatch({ type: 'submitVerification' }, 'Submitted for review.')}>
             Submit for review
           </button>
-          <button
-            className="btn sim mt8"
-            onClick={() => items.forEach((it, i) => !v.files[it.key] && dispatch({ type: 'addVerificationFile', key: it.key, image: SAMPLE[i] ?? 'room' }))}
-          >
+          <button className="btn sim mt8" onClick={() => items.forEach((it, i) => !v.files[it.key] && dispatch({ type: 'addVerificationFile', key: it.key, image: SAMPLE[i] ?? 'room' }))}>
             Fill with sample photos
           </button>
         </>
@@ -580,7 +848,7 @@ export function Store({ jobId }: { jobId?: string }) {
     <>
       <BackBar />
       <h2>Tool Store</h2>
-      <p className="sub">Tools from verified companies in Port Harcourt.{job && ` Rentals are paid from “${job.title}” when the client confirms.`}</p>
+      <p className="sub">Tools from verified companies.{job && ` Rentals come out of your fee for “${job.title}”.`}</p>
       {mine.length > 0 && (
         <>
           <h3>Your rentals</h3>
@@ -594,7 +862,7 @@ export function Store({ jobId }: { jobId?: string }) {
                     <b>{t.name}</b>
                     <div className="small">
                       {state.users[r.companyId].name} · {r.days} day{r.days > 1 ? 's' : ''} · {formatNaira(r.fee)}
-                      {r.jobId ? ' · paid from job' : ''}
+                      {r.jobId ? ' · from job fee' : ''}
                     </div>
                     <span className={'tag mt6 ' + (r.status === 'declined' ? 'bad' : r.status === 'requested' ? 'warn' : 'good')}>
                       {r.status === 'approved' ? 'Approved · ready for pickup' : r.status === 'paid' ? 'Paid' : r.status === 'requested' ? 'Waiting for company' : 'Declined'}
@@ -626,7 +894,6 @@ export function Store({ jobId }: { jobId?: string }) {
           </div>
         ))}
       </div>
-      <p className="small mt10">Only verified tool companies appear here.</p>
     </>
   );
 }
@@ -666,11 +933,11 @@ export function Rent({ toolId, jobId }: { toolId: string; jobId?: string }) {
         </div>
         <div>
           <span>Paid from</span>
-          <span>{job ? `Job ${job.ref} (when client confirms)` : `Your wallet (${formatNaira(state.wallets[user!.id] ?? 0)})`}</span>
+          <span>{job ? `Your fee for job ${job.ref}` : `Your wallet (${formatNaira(state.wallets[user!.id] ?? 0)})`}</span>
         </div>
       </div>
       <Notice tone="info" icon="i">
-        Pick up from {co.name}'s store with your Allyfe ID. Return it on time and in good condition, or the company can raise a claim.
+        Pick up from {co.name} with your Allyfe ID. Return it on time and in good condition, or the company can raise a claim.
       </Notice>
       <button className="btn primary" onClick={() => dispatch({ type: 'requestRental', toolId: t.id, days, jobId }, `Request sent to ${co.name}.`) && back()}>
         Request rental

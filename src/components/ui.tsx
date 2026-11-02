@@ -2,7 +2,8 @@ import { useState } from 'react';
 import { Avatar, Icon, Logo, type IconName } from './art';
 import { useApp, type Route } from '../store/store';
 import type { User } from '../domain/types';
-import { JOB_STATUS_LABEL, JOB_STATUS_TONE } from '../domain/rules';
+import { JOB_STATUS_LABEL, JOB_STATUS_TONE, dayKey, journeyIndex, journeySteps } from '../domain/rules';
+import { MediaError, readPhoto, readVideo } from './media';
 import type { Job } from '../domain/types';
 
 export function TopBar() {
@@ -45,7 +46,7 @@ export function BackBar({ label = 'Back', right, onBack }: { label?: string; rig
 export const Stars = ({ rating, count }: { rating: number; count?: number }) => (
   <span className="stars">
     <b>★</b>
-    {rating.toFixed(1)}
+    {Math.abs(rating * 10 - Math.round(rating * 10)) < 1e-6 ? rating.toFixed(1) : rating.toFixed(2)}
     {count != null && <span> ({count})</span>}
   </span>
 );
@@ -132,7 +133,14 @@ export function BottomNav() {
             { label: 'Feed', icon: 'feed', route: { name: 'feed' } },
             { label: 'Wallet', icon: 'wallet', route: { name: 'wallet' } },
           ]
-        : [
+        : user.role === 'vendor'
+          ? [
+              { label: 'Home', icon: 'home', route: { name: 'home' } },
+              { label: 'Requests', icon: 'requests', route: { name: 'orders' }, badge: state.jobs.filter((j) => j.city === user.city && j.status === 'awarded' && j.materialsOrder?.status === 'open').length },
+              { label: 'Feed', icon: 'feed', route: { name: 'feed' } },
+              { label: 'Wallet', icon: 'wallet', route: { name: 'wallet' } },
+            ]
+          : [
             { label: 'Home', icon: 'home', route: { name: 'home' } },
             { label: 'Requests', icon: 'requests', route: { name: 'requests' }, badge: pending },
             { label: 'Add Tool', icon: 'fab', route: { name: 'tools' } },
@@ -140,7 +148,7 @@ export function BottomNav() {
             { label: 'Wallet', icon: 'wallet', route: { name: 'wallet' } },
           ];
   return (
-    <nav className="nav" aria-label="Main">
+    <nav className="nav" aria-label="Main" style={{ gridTemplateColumns: `repeat(${items.length}, 1fr)` }}>
       {items.map((n) => {
         const on = route.name === n.route.name;
         return (
@@ -162,19 +170,19 @@ export function BottomNav() {
 }
 
 /* ---------- calendar ---------- */
-export const dayKey = (d: Date) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+export { dayKey };
 export const dayLabel = (k: string) => {
   const [y, m, d] = k.split('-').map(Number);
   return new Date(y, m - 1, d).toLocaleDateString('en-GB', { weekday: 'short', day: 'numeric', month: 'short' });
 };
 
 /** Month calendar. Past days are disabled; up to `max` days can be picked (1 = single choice). */
-export function Calendar({ selected, onChange, max = 5, allowed }: { selected: string[]; onChange: (days: string[]) => void; max?: number; allowed?: string[] }) {
+export function Calendar({ selected, onChange, max = 5, allowed, minDay }: { selected: string[]; onChange: (days: string[]) => void; max?: number; allowed?: string[]; minDay?: string }) {
   const today = new Date();
   today.setHours(0, 0, 0, 0);
   // Open on the month of the first picked or allowed day, so the client's dates are in view.
   const [view, setView] = useState(() => {
-    const start = selected[0] ?? allowed?.[0];
+    const start = selected[0] ?? allowed?.[0] ?? minDay;
     if (start) {
       const [y, m] = start.split('-').map(Number);
       return { y, m: m - 1 };
@@ -222,7 +230,7 @@ export function Calendar({ selected, onChange, max = 5, allowed }: { selected: s
         {Array.from({ length: days }, (_, i) => {
           const dt = new Date(view.y, view.m, i + 1);
           const k = dayKey(dt);
-          const disabled = dt < today || (allowed ? !allowed.includes(k) : false);
+          const disabled = dt < today || (minDay ? k < minDay : false) || (allowed ? !allowed.includes(k) : false);
           const cls = [selected.includes(k) ? 'sel' : '', +dt === +today ? 'today' : '', allowed?.includes(k) ? 'avail' : ''].join(' ');
           return (
             <button key={k} disabled={disabled} className={cls} onClick={() => toggle(k)} aria-pressed={selected.includes(k)} aria-label={dt.toDateString()}>
@@ -235,52 +243,56 @@ export function Calendar({ selected, onChange, max = 5, allowed }: { selected: s
   );
 }
 
-/* ---------- photo input ---------- */
-const MAX_DIM = 1024;
-/** Reads an image file, scales it down so localStorage stays small, and returns a JPEG data URL. */
-export function readImage(file: File): Promise<string> {
-  return new Promise((resolve, reject) => {
-    if (!file.type.startsWith('image/')) return reject(new Error('Choose an image file.'));
-    const url = URL.createObjectURL(file);
-    const img = new Image();
-    img.onload = () => {
-      const scale = Math.min(1, MAX_DIM / Math.max(img.width, img.height));
-      const c = document.createElement('canvas');
-      c.width = Math.round(img.width * scale);
-      c.height = Math.round(img.height * scale);
-      c.getContext('2d')!.drawImage(img, 0, 0, c.width, c.height);
-      URL.revokeObjectURL(url);
-      resolve(c.toDataURL('image/jpeg', 0.8));
-    };
-    img.onerror = () => {
-      URL.revokeObjectURL(url);
-      reject(new Error('That photo could not be read.'));
-    };
-    img.src = url;
-  });
-}
-
-export function PhotoInput({ onPhoto, label, children, className }: { onPhoto: (dataUrl: string) => void; label: string; children: React.ReactNode; className?: string }) {
+/* ---------- photo & video input ---------- */
+/**
+ * File picker for photos (blur-checked and compressed) and, when `video` is set,
+ * videos of up to 20 seconds. Problems show as a toast and nothing is added.
+ */
+export function MediaInput({ onMedia, label, children, className, video }: { onMedia: (dataUrl: string) => void; label: string; children: React.ReactNode; className?: string; video?: boolean }) {
   const { toast } = useApp();
+  const [busy, setBusy] = useState(false);
   return (
-    <label className={'photo-in ' + (className ?? '')}>
+    <label className={'photo-in ' + (className ?? '') + (busy ? ' busy' : '')}>
       {children}
       <input
         type="file"
-        accept="image/*"
+        accept={video ? 'image/*,video/*' : 'image/*'}
         aria-label={label}
+        disabled={busy}
         onChange={async (e) => {
           const f = e.target.files?.[0];
           e.target.value = '';
           if (!f) return;
+          setBusy(true);
           try {
-            onPhoto(await readImage(f));
+            onMedia(f.type.startsWith('video/') && video ? await readVideo(f) : await readPhoto(f));
           } catch (err) {
-            toast((err as Error).message);
+            toast(err instanceof MediaError ? err.message : 'That file could not be added.');
+          } finally {
+            setBusy(false);
           }
         }}
       />
     </label>
+  );
+}
+/** Photo-only picker, kept for existing screens. */
+export const PhotoInput = ({ onPhoto, ...rest }: { onPhoto: (dataUrl: string) => void; label: string; children: React.ReactNode; className?: string }) => <MediaInput onMedia={onPhoto} {...rest} />;
+
+/* ---------- project journey ---------- */
+export function Journey({ job }: { job: Job }) {
+  const steps = journeySteps(job);
+  const current = journeyIndex(job);
+  if (current < 0) return null;
+  return (
+    <ol className="journey" aria-label="Project journey">
+      {steps.map((st, i) => (
+        <li key={st.key} className={i < current ? 'done' : i === current ? 'now' : ''} aria-current={i === current ? 'step' : undefined}>
+          <i>{i < current ? '✓' : i + 1}</i>
+          <span>{st.label}</span>
+        </li>
+      ))}
+    </ol>
   );
 }
 

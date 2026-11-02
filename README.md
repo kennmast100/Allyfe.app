@@ -41,27 +41,38 @@ On the sign-in screen, pick a demo account, or type its phone number and any 6-d
 
 | Account | Role | Good for trying |
 | --- | --- | --- |
-| Kenneth Obi | Client | Posting a job, confirming, paying, rating |
-| Ada Nwachukwu | Client | Already has 3 open jobs for artisans to apply to |
-| Emeka Uche | Artisan (★ 4.9) | Proposals, active jobs, renting tools, posting work |
+| Kenneth Obi | Client | Posting a job, accepting a bid, confirming delivery, rating |
+| Ada Nwachukwu | Client | Already has 3 open jobs for artisans to bid on |
+| Emeka Uche | Artisan (★ 4.9) | Carpentry quotations, team profile, apprentices, posting work |
 | Grace Nwosu | Artisan | Unfinished photo verification |
+| Ibrahim Sani, David Johnson | Artisans (plumbers) | Quotations, start day, no-show replacement |
+| Tunde Bakare | Construction team of 4 | Team profile |
+| Chinedu Okafor | Artisan, ex-apprentice | Collaborated projects |
+| Mile 3 / Oil Mill vendors | Market vendors | Accepting and delivering materials |
 | ToolHub PH | Tool company | Company verification, adding tools |
 | BuildRight Tools | Tool company (verified) | Approving rental requests |
 
 ## What's in it
 
-- **Jobs:** post a job → artisans *apply* at the client's price or *propose* their own → the client confirms → the artisan checks the job on arrival → work in progress → done → the client taps **Work completed** → the client rates the artisan.
-- **Calendar:** This week, Next week, or Flexible, where the client marks up to 5 days and the artisan picks one.
-- **Payments:** every amount moves through in-app wallets. The deposit is held when the job is posted and adjusted to the agreed price on confirm. On **Work completed**, the money is split between the artisan and any tool company whose tools were rented for the job. Clients and tool companies can top up; everyone can withdraw to a bank.
-- **50% rule:** if the artisan marks a job *Not as described*, half the deposit pays for their visit and half goes back to the client.
-- **Tiers:** Basic (any verified artisan), Pro (rated 4.7★ and above), Premium (Pro plus an Allyfe supervisor who inspects the work before payment).
-- **Ratings and ranking:** each review updates the artisan's average. Ranking uses a Bayesian average plus a small loyalty bonus for jobs completed on Allyfe, so one lucky 5★ review can't beat a long track record.
-- **Verification:** artisans upload an ID, a selfie and 3 work photos; tool companies upload CAC, shop, owner ID and tool photos. Unverified artisans can't apply for jobs, and tools from unverified companies stay hidden.
-- **Tool Store:** artisans rent tools from verified companies, paid from their wallet or from the job's escrow.
-- **Community feed:** artisans post finished work, and anyone can like and comment.
-- **Alerts** for every step, and an **offline state** (a banner, plus an offline screen for actions that need a connection). Toggle it under Account → Simulate offline.
+**The job journey** (both client and artisan see it as a step-by-step tracker):
 
-Screens: sign in, home, discover, artisan profile, post a job (4 steps), job posted, artisan home, jobs board, proposal, applied, client confirm, job detail, completed, review form, alerts, offline, feed, composer, comments, wallet, verification, Tool Store, rent, rental requests, add tool, account.
+1. **Client posts a job.** They pick the kind of job first, then write a detailed description (at least 60 characters, with prompts for each trade). They add clear photos (blurry ones are refused automatically and the rest are compressed) and videos of up to 20 seconds. They pick up to 3 days, each at least 24 hours away, so a vendor has time to deliver. Nothing is paid yet.
+2. **Artisans in the same trade and city are notified.** They read the job and send a **quotation**: materials picked from a price list (`MATERIALS` in `src/domain/rules.ts`) with quantities, any extra items with their own cost price, a service fee, and one of the client's days.
+3. **Client compares bids and accepts one.** They pay the full quotation into Allyfe, which holds it.
+4. **Market vendors in the same city get the materials list.** The first verified vendor to accept supplies it, waybills it to the client's home, and is paid when the client taps **I've received the materials**.
+5. **On the scheduled day** the app pops up **Work started** for the artisan, and the client is notified. The artisan taps **Work finished**. Premium jobs get a supervisor check.
+6. **Client taps Job done.** The service fee goes to the artisan's wallet and a rating page opens. It has two questions (work quality and attitude), each scored 1 to 5; the job's stars are their average.
+
+**When things go wrong:**
+- **Not as described:** on arrival the artisan can flag the job. The client forfeits 50% of the service fee; the materials stay with them.
+- **No-show:** from the scheduled day the client can report a no-show. The artisan gets 1★ for that job. The client then chooses a **refund** (everything held except delivered materials) or **another artisan**. The new quotation is automatically reduced by the materials already on site, and the money still held counts toward it.
+- **Cancel before delivery:** full refund.
+
+**People:** clients, artisans (individuals or construction teams, with apprentices; a former apprentice's profile shows the master's work as collaborated projects), market vendors, and tool companies that rent tools to artisans. Jobs only go to artisans and vendors in the client's city.
+
+**Also:** in-app wallets with top-up and withdrawal, the Tool Store, the community feed (photo or video posts, likes, comments), alerts, an offline state, and Terms & Conditions (including the refund rules).
+
+Screens: see `screenshots/v2/` for every page of the current flow.
 
 ## Code layout
 

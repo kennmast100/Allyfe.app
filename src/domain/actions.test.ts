@@ -1,40 +1,72 @@
 import { describe, expect, it } from 'vitest';
-import { DomainError, reduce, type Action, type JobDraft } from './actions';
+import { DomainError, reduce, type Action, type BidDraft, type JobDraft } from './actions';
 import { seedState } from './seed';
-import { addRating, completionSplit, misdescribedSplit, rankArtisans, tierPrices } from './rules';
+import { addRating, billableMaterials, dayKey, earliestWorkDay, jobStars, misdescribedSplit, rankArtisans } from './rules';
 import type { AppState, Artisan } from './types';
 
-const T0 = 1_800_000_000_000;
+// Monday 2 Nov 2026, 09:00 local time.
+const T0 = new Date(2026, 10, 2, 9, 0, 0).getTime();
 let clock = T0;
+const at = (t: number) => (clock = t);
 const run = (s: AppState, ...actions: Action[]) => actions.reduce((acc, a) => reduce(acc, a, (clock += 1000)), s);
 const as = (s: AppState, userId: string, ...actions: Action[]) => run(s, { type: 'signIn', userId }, ...actions);
 
+const WED = '2026-11-04';
 const draft = (over: Partial<JobDraft> = {}): JobDraft => ({
-  title: 'Build kitchen cabinets',
-  desc: 'Replace 6 doors.',
+  title: 'Fix leaking shower and kitchen tap',
+  desc: 'The shower mixer drips constantly and the kitchen sink tap is loose. Bathroom is upstairs, pipes are ½ inch PVC.',
   addr: '12 Woji Road',
-  category: 'Home Renovation',
-  tier: 'Pro',
-  schedule: { mode: 'This week', days: [] },
-  photos: [],
+  category: 'Plumbing',
+  tier: 'Basic',
+  preferredDays: [WED],
+  media: [],
   honest: true,
   ...over,
 });
+const bid = (over: Partial<BidDraft> = {}): BidDraft => ({
+  lines: [
+    { key: 'pl-shower', name: '', unit: '', unitPrice: 0, qty: 1 },
+    { key: 'pl-ptfe', name: '', unit: '', unitPrice: 0, qty: 2 },
+    { key: 'custom:x', name: 'Silicone sealant', unit: 'tube', unitPrice: 2500, qty: 1 },
+  ],
+  serviceFee: 20000,
+  day: WED,
+  message: 'Includes removing the old mixer.',
+  ...over,
+});
+// shower 25,000 + 2 × PTFE 300 + sealant 2,500 = 28,100 materials; + 20,000 fee = 48,100
 
-function postedJob(over: Partial<JobDraft> = {}) {
-  let s = as(seedState(T0), 'c-kenneth', { type: 'postJob', draft: draft(over) });
-  const job = s.jobs[0];
+function posted(over: Partial<JobDraft> = {}) {
+  at(T0);
+  const s = as(seedState(T0), 'c-kenneth', { type: 'postJob', draft: draft(over) });
+  return { s, job: s.jobs[0] };
+}
+function awarded() {
+  let { s, job } = posted();
+  s = as(s, 'a-ibrahim', { type: 'submitBid', jobId: job.id, bid: bid() });
+  s = as(s, 'c-kenneth', { type: 'acceptBid', jobId: job.id, bidId: s.jobs[0].bids[0].id });
+  return { s, job };
+}
+function delivered() {
+  let { s, job } = awarded();
+  s = as(s, 'v-oilmill', { type: 'vendorAcceptOrder', jobId: job.id }, { type: 'vendorDispatch', jobId: job.id, waybill: 'Rider Musa, 0803 555 0101' });
+  s = as(s, 'c-kenneth', { type: 'confirmMaterials', jobId: job.id });
   return { s, job };
 }
 
 describe('rules', () => {
-  it('prices tiers per category', () => {
-    expect(tierPrices('Home Renovation')).toEqual({ Basic: 120000, Pro: 156000, Premium: 180000 });
+  it('books work no earlier than 24 hours after posting, from 8am', () => {
+    expect(earliestWorkDay(new Date(2026, 10, 2, 7, 0).getTime())).toBe('2026-11-03'); // Tue 8am is 25h later
+    expect(earliestWorkDay(new Date(2026, 10, 2, 9, 0).getTime())).toBe('2026-11-04'); // Tue 8am is only 23h later
   });
-  it('averages a new rating into the running total', () => {
-    expect(addRating(4.9, 120, 5)).toEqual([4.9, 121]);
-    expect(addRating(4, 1, 2)).toEqual([3, 2]);
-    expect(() => addRating(4, 1, 6)).toThrow();
+  it('turns the two rating answers into stars out of 5', () => {
+    expect(jobStars(5, 5)).toBe(5);
+    expect(jobStars(5, 4)).toBe(4.5);
+    expect(jobStars(1, 1)).toBe(1);
+    expect(() => jobStars(6, 1)).toThrow();
+  });
+  it('averages job stars, including halves', () => {
+    expect(addRating(4, 1, 4.5)).toEqual([4.25, 2]);
   });
   it('ranks a long, strong track record above one lucky review', () => {
     const base = seedState(T0).users['a-emeka'] as Artisan;
@@ -42,110 +74,104 @@ describe('rules', () => {
     const newcomer = { ...base, id: 'n', rating: 5, ratingCount: 1, jobsDone: 1 };
     expect(rankArtisans([newcomer, veteran]).map((a) => a.id)).toEqual(['v', 'n']);
   });
-  it('splits 50/50 when a job is misdescribed', () => {
-    expect(misdescribedSplit(156001)).toEqual({ artisan: 78001, clientRefund: 78000 });
+  it('takes already-delivered materials off a new quotation', () => {
+    const line = (key: string, qty: number, unitPrice = 1000) => ({ key, name: key, unit: 'piece', unitPrice, qty });
+    const { billable, covered } = billableMaterials([line('a', 3), line('b', 1)], [line('a', 2), line('c', 5)]);
+    expect(billable).toEqual([line('a', 1), line('b', 1)]);
+    expect(covered).toEqual([line('a', 2)]);
+  });
+  it('splits the service fee 50/50 when a job is misdescribed', () => {
+    expect(misdescribedSplit(20001)).toEqual({ artisan: 10001, clientRefund: 10000 });
   });
 });
 
-describe('job lifecycle', () => {
-  it('holds the deposit when a client posts a job', () => {
-    const { s, job } = postedJob();
+describe('posting', () => {
+  it('posts without payment and alerts only matching artisans in the same city', () => {
+    const { s, job } = posted();
     expect(job.status).toBe('open');
-    expect(job.escrow).toBe(156000);
-    expect(s.wallets['c-kenneth']).toBe(250000 - 156000);
-    expect(s.alerts['a-emeka']?.[0].text).toMatch(/New home renovation job/);
+    expect(s.wallets['c-kenneth']).toBe(400000);
+    expect(s.alerts['a-ibrahim']?.[0].text).toMatch(/New plumbing job in Port Harcourt/);
+    expect(s.alerts['a-femi']).toBeUndefined(); // Lagos plumber
+    expect(s.alerts['a-emeka']).toBeUndefined(); // carpenter
   });
-
-  it('refuses to post without the honesty confirmation', () => {
+  it('requires a detailed description', () => {
+    at(T0);
     const s = as(seedState(T0), 'c-kenneth');
-    expect(() => reduce(s, { type: 'postJob', draft: draft({ honest: false }) })).toThrow(DomainError);
+    expect(() => reduce(s, { type: 'postJob', draft: draft({ desc: 'Tap leaking' }) }, T0)).toThrow(/more detail/);
   });
-
-  it('refuses to post when the wallet is short', () => {
-    const s = as(seedState(T0), 'c-kenneth', { type: 'withdraw', amount: 200000 });
-    expect(() => reduce(s, { type: 'postJob', draft: draft() })).toThrow(/needs/);
+  it('refuses days less than 24 hours away', () => {
+    at(T0);
+    const s = as(seedState(T0), 'c-kenneth');
+    expect(() => reduce(s, { type: 'postJob', draft: draft({ preferredDays: ['2026-11-03'] }) }, T0)).toThrow(/24 hours/);
   });
+});
 
-  it('runs post → propose → confirm → work → complete → rate, splitting funds with a tool company', () => {
-    let { s, job } = postedJob();
-    s = as(s, 'a-emeka', { type: 'submitProposal', jobId: job.id, kind: 'propose', amount: 170000, message: 'Includes hinges.' });
-    const proposal = s.jobs[0].proposals[0];
+describe('bidding', () => {
+  it('prices catalogue items from the list, not from the phone', () => {
+    let { s, job } = posted();
+    s = as(s, 'a-ibrahim', { type: 'submitBid', jobId: job.id, bid: bid({ lines: [{ key: 'pl-shower', name: 'x', unit: 'x', unitPrice: 1, qty: 1 }] }) });
+    expect(s.jobs[0].bids[0].lines[0]).toMatchObject({ name: 'Shower mixer set', unitPrice: 25000 });
+  });
+  it('keeps artisans in other cities and trades out', () => {
+    const { s, job } = posted();
+    expect(() => as(s, 'a-femi', { type: 'submitBid', jobId: job.id, bid: bid() })).toThrow(/Lagos|Port Harcourt/);
+    expect(() => as(s, 'a-emeka', { type: 'submitBid', jobId: job.id, bid: bid() })).toThrow(DomainError);
+  });
+  it('blocks unverified artisans', () => {
+    const { s, job } = posted({ category: 'Electrical', title: 'Sockets' });
+    expect(() => as(s, 'a-grace', { type: 'submitBid', jobId: job.id, bid: bid({ lines: [] }) })).toThrow(/verification/);
+  });
+});
 
-    s = as(s, 'c-kenneth', { type: 'confirmProposal', jobId: job.id, proposalId: proposal.id });
-    expect(s.jobs[0].status).toBe('confirmed');
-    expect(s.jobs[0].escrow).toBe(170000);
-    expect(s.wallets['c-kenneth']).toBe(250000 - 170000);
+describe('the full journey', () => {
+  it('accept → vendor → delivered → started → finished → job done → rated, with the right payouts', () => {
+    let { s, job } = awarded();
+    expect(s.jobs[0].status).toBe('awarded');
+    expect(s.jobs[0].escrow).toBe(48100);
+    expect(s.wallets['c-kenneth']).toBe(400000 - 48100);
+    expect(s.jobs[0].materialsOrder).toMatchObject({ total: 28100, status: 'open' });
+    expect(s.alerts['v-mile3'][0].text).toMatch(/New materials request/);
+    expect(s.alerts['v-tradefair']).toBeUndefined(); // Lagos vendor
 
-    // ToolHub must be verified before anyone can rent from it.
-    s = as(s, 'co-toolhub', ...['cac', 'shop', 'owner', 'w1'].map((key) => ({ type: 'addVerificationFile', key, image: 'room' }) as Action), { type: 'submitVerification' });
-    s = run(s, { type: 'approveVerification', userId: 'co-toolhub' });
+    s = as(s, 'v-oilmill', { type: 'vendorAcceptOrder', jobId: job.id });
+    expect(() => as(s, 'v-mile3', { type: 'vendorAcceptOrder', jobId: job.id })).toThrow(DomainError);
+    s = as(s, 'v-oilmill', { type: 'vendorDispatch', jobId: job.id, waybill: 'Rider Musa' });
+    s = as(s, 'c-kenneth', { type: 'confirmMaterials', jobId: job.id });
+    expect(s.wallets['v-oilmill']).toBe(28100);
+    expect(s.jobs[0].escrow).toBe(20000);
+    expect(s.alerts['a-ibrahim'][0].text).toMatch(/materials .* are at the client's home/i);
 
-    s = as(s, 'a-emeka', { type: 'startWork', jobId: job.id }, { type: 'requestRental', toolId: 't3', days: 2, jobId: job.id });
-    const rental = s.rentals[0];
-    s = as(s, 'co-toolhub', { type: 'respondRental', rentalId: rental.id, approve: true });
-    s = as(s, 'a-emeka', { type: 'markDone', jobId: job.id });
-    expect(s.jobs[0].status).toBe('awaiting_client');
-
-    const emekaBefore = s.wallets['a-emeka'];
+    // Not before the scheduled day (Wednesday).
+    expect(() => as(s, 'a-ibrahim', { type: 'startWork', jobId: job.id })).toThrow(/scheduled day/);
+    at(new Date(2026, 10, 4, 9).getTime());
+    s = as(s, 'a-ibrahim', { type: 'startWork', jobId: job.id }, { type: 'finishWork', jobId: job.id });
+    expect(s.alerts['c-kenneth'][0].text).toMatch(/finished/);
+    const before = s.wallets['a-ibrahim'];
     s = as(s, 'c-kenneth', { type: 'completeJob', jobId: job.id });
-    expect(s.jobs[0].status).toBe('completed');
+    expect(s.wallets['a-ibrahim']).toBe(before + 20000);
     expect(s.jobs[0].escrow).toBe(0);
-    expect(s.wallets['co-toolhub']).toBe(30000);
-    expect(s.wallets['a-emeka']).toBe(emekaBefore + 140000);
-    expect(s.rentals[0].status).toBe('paid');
 
-    s = as(s, 'c-kenneth', { type: 'submitReview', jobId: job.id, stars: 4, text: 'Good' });
-    const emeka = s.users['a-emeka'] as Artisan;
-    expect(emeka.ratingCount).toBe(121);
-    expect(emeka.rating).toBeCloseTo((4.9 * 120 + 4) / 121, 2);
-    expect(() => reduce(s, { type: 'submitReview', jobId: job.id, stars: 5, text: '' })).toThrow(/already/);
+    s = as(s, 'c-kenneth', { type: 'rateJob', jobId: job.id, work: 5, attitude: 4, text: 'Neat' });
+    const ib = s.users['a-ibrahim'] as Artisan;
+    expect(s.jobs[0].rating?.stars).toBe(4.5);
+    expect(ib.ratingCount).toBe(81);
+    expect(ib.rating).toBeCloseTo((4.8 * 80 + 4.5) / 81, 2);
   });
 
-  it('returns the difference when the agreed price is below the deposit', () => {
-    let { s, job } = postedJob();
-    s = as(s, 'a-emeka', { type: 'submitProposal', jobId: job.id, kind: 'propose', amount: 100000, message: 'Doors only.' });
-    s = as(s, 'c-kenneth', { type: 'confirmProposal', jobId: job.id, proposalId: s.jobs[0].proposals[0].id });
-    expect(s.wallets['c-kenneth']).toBe(250000 - 100000);
+  it('skips vendors when the quotation has no materials', () => {
+    let { s, job } = posted();
+    s = as(s, 'a-ibrahim', { type: 'submitBid', jobId: job.id, bid: bid({ lines: [] }) });
+    s = as(s, 'c-kenneth', { type: 'acceptBid', jobId: job.id, bidId: s.jobs[0].bids[0].id });
+    expect(s.jobs[0].status).toBe('ready');
+    expect(s.jobs[0].materialsOrder).toBeUndefined();
   });
 
-  it('declines the other proposals when one is confirmed', () => {
-    let { s, job } = postedJob({ tier: 'Basic' });
-    s = as(s, 'a-emeka', { type: 'submitProposal', jobId: job.id, kind: 'apply', amount: 0, message: '' });
-    s = as(s, 'a-tunde', { type: 'submitProposal', jobId: job.id, kind: 'apply', amount: 0, message: '' });
-    const [p1, p2] = s.jobs[0].proposals;
-    s = as(s, 'c-kenneth', { type: 'confirmProposal', jobId: job.id, proposalId: p2.id });
-    expect(s.jobs[0].proposals.find((p) => p.id === p1.id)!.status).toBe('declined');
-    expect(s.alerts['a-emeka'][0].text).toMatch(/chose another artisan/);
-  });
-
-  it('keeps Pro jobs for artisans rated 4.7★ and above', () => {
-    const { s, job } = postedJob({ tier: 'Pro' });
-    const tunde = as(s, 'a-tunde');
-    expect(() => reduce(tunde, { type: 'submitProposal', jobId: job.id, kind: 'apply', amount: 0, message: '' })).toThrow(/4.7/);
-  });
-
-  it('blocks unverified artisans from applying', () => {
-    const { s, job } = postedJob({ category: 'Electrical', tier: 'Basic' });
-    const grace = as(s, 'a-grace');
-    expect(() => reduce(grace, { type: 'submitProposal', jobId: job.id, kind: 'apply', amount: 0, message: '' })).toThrow(/verification/);
-  });
-
-  it('applies the 50% rule when the artisan flags the job as misdescribed', () => {
-    let { s, job } = postedJob();
-    s = as(s, 'a-emeka', { type: 'submitProposal', jobId: job.id, kind: 'apply', amount: 0, message: '' });
-    s = as(s, 'c-kenneth', { type: 'confirmProposal', jobId: job.id, proposalId: s.jobs[0].proposals[0].id });
-    const emekaBefore = s.wallets['a-emeka'];
-    s = as(s, 'a-emeka', { type: 'flagMisdescribed', jobId: job.id });
-    expect(s.jobs[0].status).toBe('not_as_described');
-    expect(s.wallets['a-emeka']).toBe(emekaBefore + 78000);
-    expect(s.wallets['c-kenneth']).toBe(250000 - 78000);
-  });
-
-  it('routes Premium jobs through the supervisor before the client confirms', () => {
-    let { s, job } = postedJob({ tier: 'Premium' });
-    s = as(s, 'a-emeka', { type: 'submitProposal', jobId: job.id, kind: 'apply', amount: 0, message: '' });
-    s = as(s, 'c-kenneth', { type: 'confirmProposal', jobId: job.id, proposalId: s.jobs[0].proposals[0].id });
-    s = as(s, 'a-emeka', { type: 'startWork', jobId: job.id }, { type: 'markDone', jobId: job.id });
+  it('routes Premium jobs through the supervisor', () => {
+    let { s, job } = posted({ tier: 'Premium' });
+    s = as(s, 'a-ibrahim', { type: 'submitBid', jobId: job.id, bid: bid({ lines: [] }) });
+    s = as(s, 'c-kenneth', { type: 'acceptBid', jobId: job.id, bidId: s.jobs[0].bids[0].id });
+    at(new Date(2026, 10, 4, 9).getTime());
+    s = as(s, 'a-ibrahim', { type: 'startWork', jobId: job.id }, { type: 'finishWork', jobId: job.id });
     expect(s.jobs[0].status).toBe('supervisor_check');
     expect(() => as(s, 'c-kenneth', { type: 'completeJob', jobId: job.id })).toThrow(DomainError);
     s = run(s, { type: 'supervisorApprove', jobId: job.id });
@@ -153,48 +179,104 @@ describe('job lifecycle', () => {
     expect(s.jobs[0].status).toBe('completed');
   });
 
-  it('refunds the deposit when an open job is cancelled', () => {
-    let { s, job } = postedJob();
-    s = run(s, { type: 'cancelJob', jobId: job.id });
-    expect(s.wallets['c-kenneth']).toBe(250000);
-    expect(s.jobs[0].status).toBe('cancelled');
-  });
-
-  it('only lets the posting client release payment', () => {
-    const { s, job } = postedJob();
-    expect(() => as(s, 'c-ada', { type: 'cancelJob', jobId: job.id })).toThrow(/Only the client/);
+  it('applies the 50% rule to the service fee; the materials stay with the client', () => {
+    let { s, job } = delivered();
+    const before = s.wallets['c-kenneth'];
+    s = as(s, 'a-ibrahim', { type: 'flagMisdescribed', jobId: job.id });
+    expect(s.jobs[0].status).toBe('not_as_described');
+    expect(s.wallets['c-kenneth']).toBe(before + 10000);
   });
 });
 
-describe('wallet rentals', () => {
-  it('holds the fee, then pays the company on approval or refunds on decline', () => {
+describe('no-shows', () => {
+  it('gives the artisan 1★ and refunds everything except delivered materials', () => {
+    let { s, job } = delivered();
+    expect(() => as(s, 'c-kenneth', { type: 'reportNoShow', jobId: job.id })).toThrow(/from that day/);
+    at(new Date(2026, 10, 4, 15).getTime());
+    s = as(s, 'c-kenneth', { type: 'reportNoShow', jobId: job.id });
+    const ib = s.users['a-ibrahim'] as Artisan;
+    expect(ib.ratingCount).toBe(81);
+    expect(ib.rating).toBeCloseTo((4.8 * 80 + 1) / 81, 2);
+    s = as(s, 'c-kenneth', { type: 'requestRefund', jobId: job.id });
+    expect(s.wallets['c-kenneth']).toBe(400000 - 28100); // only the materials are kept
+    expect(s.jobs[0].status).toBe('refunded');
+  });
+
+  it('lets a new artisan take over, billing only what is still needed', () => {
+    let { s, job } = delivered();
+    at(new Date(2026, 10, 4, 15).getTime());
+    s = as(s, 'c-kenneth', { type: 'reportNoShow', jobId: job.id }, { type: 'chooseAnotherArtisan', jobId: job.id });
+    expect(s.jobs[0].status).toBe('open');
+    expect(s.jobs[0].escrow).toBe(20000); // the old service fee is still held
+    expect(() => as(s, 'a-ibrahim', { type: 'submitBid', jobId: job.id, bid: bid() })).toThrow(/missed this job/);
+
+    // Ibrahim's fellow plumber does not exist in seed data, so make Femi a Port Harcourt plumber for this test.
+    (s.users['a-femi'] as Artisan).city = 'Port Harcourt';
+    const day = s.jobs[0].preferredDays[0];
+    // Needs the same shower mixer (already delivered) plus 2 extra elbows, and charges 25,000.
+    s = as(s, 'a-femi', {
+      type: 'submitBid',
+      jobId: job.id,
+      bid: bid({ day, serviceFee: 25000, lines: [{ key: 'pl-shower', name: '', unit: '', unitPrice: 0, qty: 1 }, { key: 'pl-elbow', name: '', unit: '', unitPrice: 0, qty: 2 }] }),
+    });
+    const walletBefore = s.wallets['c-kenneth'];
+    s = as(s, 'c-kenneth', { type: 'acceptBid', jobId: job.id, bidId: s.jobs[0].bids.find((b) => b.artisanId === 'a-femi')!.id });
+    // Due: 600 (elbows) + 25,000 fee − 20,000 already held = 5,600.
+    expect(s.wallets['c-kenneth']).toBe(walletBefore - 5600);
+    expect(s.jobs[0].materialsOrder).toMatchObject({ total: 600 });
+    expect(s.jobs[0].materialsOrder!.lines.map((l) => l.key)).toEqual(['pl-elbow']);
+  });
+
+  it('refunds the difference when the new artisan costs less', () => {
+    let { s, job } = delivered();
+    at(new Date(2026, 10, 4, 15).getTime());
+    s = as(s, 'c-kenneth', { type: 'reportNoShow', jobId: job.id }, { type: 'chooseAnotherArtisan', jobId: job.id });
+    (s.users['a-femi'] as Artisan).city = 'Port Harcourt';
+    s = as(s, 'a-femi', { type: 'submitBid', jobId: job.id, bid: bid({ day: s.jobs[0].preferredDays[0], serviceFee: 15000, lines: [{ key: 'pl-shower', name: '', unit: '', unitPrice: 0, qty: 1 }] }) });
+    const walletBefore = s.wallets['c-kenneth'];
+    s = as(s, 'c-kenneth', { type: 'acceptBid', jobId: job.id, bidId: s.jobs[0].bids.find((b) => b.artisanId === 'a-femi')!.id });
+    expect(s.wallets['c-kenneth']).toBe(walletBefore + 5000);
+    expect(s.jobs[0].status).toBe('ready'); // everything needed is already on site
+  });
+
+  it('refunds in full when cancelled before the vendor delivers', () => {
+    let { s, job } = awarded();
+    s = as(s, 'v-oilmill', { type: 'vendorAcceptOrder', jobId: job.id });
+    s = as(s, 'c-kenneth', { type: 'requestRefund', jobId: job.id });
+    expect(s.wallets['c-kenneth']).toBe(400000);
+    expect(s.jobs[0].materialsOrder?.status).toBe('cancelled');
+    expect(s.alerts['v-oilmill'][0].text).toMatch(/don't send/);
+  });
+});
+
+describe('profiles', () => {
+  it('lets an artisan work as a team and keep apprentices', () => {
+    let s = as(seedState(T0), 'a-emeka', { type: 'updateProfile', kind: 'team', teamName: 'Uche Woodworks', teamMembers: ['Emeka Uche', 'Obinna'], bio: '' });
+    s = run(s, { type: 'addApprentice', name: 'Ifeanyi', phone: '0803 222 0000', photo: 'room' });
+    const e = s.users['a-emeka'] as Artisan;
+    expect(e.kind).toBe('team');
+    expect(e.apprentices.map((a) => a.name)).toEqual(['Chinedu Okafor', 'Ifeanyi']);
+    expect(() => run(s, { type: 'updateProfile', kind: 'team', teamName: 'X', teamMembers: ['Solo'], bio: '' })).toThrow(/2 members/);
+  });
+});
+
+describe('wallet rentals and feed', () => {
+  it('holds a rental fee, then pays the company on approval or refunds on decline', () => {
+    at(T0);
     let s = as(seedState(T0), 'a-emeka', { type: 'requestRental', toolId: 't1', days: 2 });
     expect(s.wallets['a-emeka']).toBe(86500 - 16000);
-    s = as(s, 'co-buildright', { type: 'respondRental', rentalId: s.rentals[0].id, approve: true });
-    expect(s.wallets['co-buildright']).toBe(54000 + 16000);
-
-    s = as(s, 'a-emeka', { type: 'requestRental', toolId: 't2', days: 1 });
     s = as(s, 'co-buildright', { type: 'respondRental', rentalId: s.rentals[0].id, approve: false });
-    expect(s.wallets['a-emeka']).toBe(86500 - 16000);
+    expect(s.wallets['a-emeka']).toBe(86500);
   });
-
-  it('will not rent from an unverified company', () => {
-    const s = as(seedState(T0), 'a-emeka');
-    expect(() => reduce(s, { type: 'requestRental', toolId: 't3', days: 1 })).toThrow(/not verified/);
-  });
-
-  it('caps job-funded rentals at the job escrow', () => {
-    expect(() => completionSplit({ id: 'j', escrow: 1000 }, [{ id: 'r', toolId: 't', companyId: 'c', artisanId: 'a', days: 1, fee: 2000, jobId: 'j', status: 'approved', at: 0 }])).toThrow();
-  });
-});
-
-describe('feed', () => {
   it('posts, likes and comments', () => {
+    at(T0);
     let s = as(seedState(T0), 'a-emeka', { type: 'createPost', image: 'cabinet', text: 'New kitchen' });
     const pid = s.posts[0].id;
     s = as(s, 'c-kenneth', { type: 'toggleLike', postId: pid }, { type: 'addComment', postId: pid, text: 'Lovely' });
     expect(s.posts[0].likes).toEqual(['c-kenneth']);
     expect(s.posts[0].comments[0].text).toBe('Lovely');
-    expect(s.alerts['a-emeka'].map((a) => a.text)).toEqual(['Kenneth commented: “Lovely”', 'Kenneth Obi liked your post.']);
+  });
+  it('uses the date helpers consistently', () => {
+    expect(dayKey(new Date(2026, 0, 5))).toBe('2026-01-05');
   });
 });

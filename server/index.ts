@@ -22,8 +22,8 @@ const MIME: Record<string, string> = {
 };
 
 const storage = process.env.DATABASE_URL ? await postgresStorage(process.env.DATABASE_URL) : fileStorage(process.env.DATA_FILE || 'data/state.json');
-// Wiping the shared data is a testing convenience; never allow it in production.
-const core = await createCore(storage, { allowReset: APP_ENV !== 'production' });
+// Testing shortcuts (reset, demo approvals, moving dates) are never allowed in production.
+const core = await createCore(storage, { allowDemoActions: APP_ENV !== 'production' });
 
 function send(res: ServerResponse, status: number, body?: unknown) {
   res.writeHead(status, { 'content-type': 'application/json', 'cache-control': 'no-store' });

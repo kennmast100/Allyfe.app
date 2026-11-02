@@ -1,10 +1,20 @@
 import { describe, expect, it } from 'vitest';
 import { createCore, memoryStorage } from './core';
 import { reduce, type Action } from '../src/domain/actions';
+import { earliestWorkDay } from '../src/domain/rules';
 
 const post: Action = {
   type: 'postJob',
-  draft: { title: 'Fix sockets', desc: 'Three sockets dead.', addr: '12 Woji Road', category: 'Electrical', tier: 'Basic', schedule: { mode: 'This week', days: [] }, photos: [], honest: true },
+  draft: {
+    title: 'Fix sockets',
+    desc: 'Three double sockets in the kitchen stopped working after a power surge. The breaker trips when I reset it.',
+    addr: '12 Woji Road',
+    category: 'Electrical',
+    tier: 'Basic',
+    preferredDays: [earliestWorkDay(Date.now())],
+    media: [],
+    honest: true,
+  },
 };
 
 describe('server core', () => {
@@ -24,10 +34,11 @@ describe('server core', () => {
     const core = await createCore(memoryStorage());
     await core.apply({ userId: 'c-kenneth', action: post, now: Date.now(), nonce: 'n1aaaaaa' });
     const jobId = core.snapshot().state.jobs[0].id;
-    const r = await core.apply({ userId: 'a-chidi', action: { type: 'submitProposal', jobId, kind: 'apply', amount: 0, message: '' }, now: Date.now(), nonce: 'n2aaaaaa' });
+    const day = core.snapshot().state.jobs[0].preferredDays[0];
+    const r = await core.apply({ userId: 'a-chidi', action: { type: 'submitBid', jobId, bid: { lines: [{ key: 'el-socket', name: '', unit: '', unitPrice: 0, qty: 3 }], serviceFee: 15000, day, message: '' } }, now: Date.now(), nonce: 'n2aaaaaa' });
     expect(r.ok).toBe(true);
-    expect(core.snapshot().state.jobs[0].proposals[0].artisanId).toBe('a-chidi');
-    expect(core.snapshot().state.alerts['c-kenneth'][0].text).toMatch(/Chidi Amadi applied/);
+    expect(core.snapshot().state.jobs[0].bids[0].artisanId).toBe('a-chidi');
+    expect(core.snapshot().state.alerts['c-kenneth'][0].text).toMatch(/Chidi Amadi sent a quotation of ₦22,500/);
   });
 
   it('refuses broken rules with the reason and leaves the state alone', async () => {
@@ -46,8 +57,8 @@ describe('server core', () => {
     expect((await core.apply({ userId: 'c-kenneth', action: { type: 'topUp', amount: 5 }, now: Date.now(), nonce: '../x' })).ok).toBe(false);
   });
 
-  it('can block resetting the shared data (production)', async () => {
-    const core = await createCore(memoryStorage(), { allowReset: false });
+  it('can block testing shortcuts such as reset (production)', async () => {
+    const core = await createCore(memoryStorage(), { allowDemoActions: false });
     const r = await core.apply({ userId: 'c-kenneth', action: { type: 'reset' }, now: Date.now(), nonce: 'n7aaaaaa' });
     expect(r.ok).toBe(false);
   });

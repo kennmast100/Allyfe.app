@@ -1,4 +1,4 @@
-import { DomainError, LOCAL_ONLY_ACTIONS, reduce, type Action } from '../src/domain/actions';
+import { DEMO_ONLY_ACTIONS, DomainError, LOCAL_ONLY_ACTIONS, reduce, type Action } from '../src/domain/actions';
 import { seedState } from '../src/domain/seed';
 import type { AppState } from '../src/domain/types';
 
@@ -14,7 +14,7 @@ export type ActionResult = { ok: true; rev: number; state: AppState } | { ok: fa
 const NONCE = /^[a-z0-9]{6,32}$/;
 
 /** Holds the one shared copy of the app state and applies actions to it one at a time. */
-export async function createCore(storage: Storage, opts: { allowReset?: boolean } = {}) {
+export async function createCore(storage: Storage, opts: { allowDemoActions?: boolean } = {}) {
   const loaded = await storage.load();
   let state: AppState = loaded?.state ?? seedState();
   let rev = loaded?.rev ?? 1;
@@ -30,7 +30,7 @@ export async function createCore(storage: Storage, opts: { allowReset?: boolean 
       if (LOCAL_ONLY_ACTIONS.includes(req.action.type)) return fail(400, 'That action stays on the device.');
       if (typeof req.nonce !== 'string' || !NONCE.test(req.nonce)) return fail(400, 'Bad request.');
       const isReset = req.action.type === 'reset';
-      if (isReset && opts.allowReset === false) return fail(403, 'Resetting data is turned off here.');
+      if (opts.allowDemoActions === false && DEMO_ONLY_ACTIONS.includes(req.action.type)) return fail(403, 'Testing shortcuts are turned off here.');
       if (!isReset && !state.users[req.userId]) return fail(401, 'Please sign in again.');
       // Trust the phone's clock only within a minute of the server's.
       const now = Number.isFinite(req.now) && Math.abs(req.now - Date.now()) < 60_000 ? req.now : Date.now();

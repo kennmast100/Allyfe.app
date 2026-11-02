@@ -1,5 +1,22 @@
-import type { AppState, Artisan, Category, Company, ImageRef, Job, Proposal, ProposalKind, Schedule, Tier, ToolKind, TxnKind, User } from './types';
-import { addRating, artisanQualifies, completionSplit, formatNaira, jobToolCost, misdescribedSplit, tierPrices } from './rules';
+import type { AppState, Apprentice, Artisan, Category, City, Company, ImageRef, Job, QuoteLine, Tier, ToolKind, TxnKind, User, Vendor } from './types';
+import {
+  MIN_DESCRIPTION,
+  NO_SHOW_STARS,
+  addRating,
+  artisanQualifies,
+  bidCharge,
+  catalogItem,
+  completionSplit,
+  customKey,
+  dayKey,
+  earliestWorkDay,
+  formatNaira,
+  isOnOrAfterDay,
+  jobStars,
+  jobToolCost,
+  linesTotal,
+  misdescribedSplit,
+} from './rules';
 import { seedState } from './seed';
 
 /** A rule was broken. The message is safe to show to the user. */
@@ -14,11 +31,13 @@ export type JobDraft = {
   addr: string;
   category: Category;
   tier: Tier;
-  schedule: Schedule;
-  photos: ImageRef[];
+  preferredDays: string[];
+  media: ImageRef[];
   honest: boolean;
   invitedArtisanId?: string;
 };
+
+export type BidDraft = { lines: QuoteLine[]; serviceFee: number; day: string; message: string };
 
 export type Action =
   | { type: 'signIn'; userId: string }
@@ -29,17 +48,26 @@ export type Action =
   | { type: 'withdraw'; amount: number }
   | { type: 'postJob'; draft: JobDraft }
   | { type: 'cancelJob'; jobId: string }
-  | { type: 'submitProposal'; jobId: string; kind: ProposalKind; amount: number; message: string; startDay?: string }
-  | { type: 'declineInvite'; jobId: string }
-  | { type: 'confirmProposal'; jobId: string; proposalId: string }
+  | { type: 'submitBid'; jobId: string; bid: BidDraft }
+  | { type: 'acceptBid'; jobId: string; bidId: string }
+  | { type: 'vendorAcceptOrder'; jobId: string }
+  | { type: 'vendorDispatch'; jobId: string; waybill: string }
+  | { type: 'confirmMaterials'; jobId: string }
   | { type: 'startWork'; jobId: string }
   | { type: 'flagMisdescribed'; jobId: string }
-  | { type: 'markDone'; jobId: string }
+  | { type: 'finishWork'; jobId: string }
   | { type: 'supervisorApprove'; jobId: string }
   | { type: 'notFinished'; jobId: string }
   | { type: 'raiseConcern'; jobId: string }
   | { type: 'completeJob'; jobId: string }
-  | { type: 'submitReview'; jobId: string; stars: number; text: string }
+  | { type: 'rateJob'; jobId: string; work: number; attitude: number; text: string }
+  | { type: 'reportNoShow'; jobId: string }
+  | { type: 'requestRefund'; jobId: string }
+  | { type: 'chooseAnotherArtisan'; jobId: string }
+  | { type: 'demoStartDay'; jobId: string }
+  | { type: 'updateProfile'; kind: 'individual' | 'team'; teamName: string; teamMembers: string[]; bio: string }
+  | { type: 'addApprentice'; name: string; phone: string; photo: ImageRef }
+  | { type: 'removeApprentice'; apprenticeId: string }
   | { type: 'addVerificationFile'; key: string; image: ImageRef }
   | { type: 'submitVerification' }
   | { type: 'approveVerification'; userId: string }
@@ -53,6 +81,8 @@ export type Action =
 
 /** Actions that only change this device's session and never go to the server. */
 export const LOCAL_ONLY_ACTIONS: Action['type'][] = ['signIn', 'signOut'];
+/** Testing shortcuts the production server refuses. */
+export const DEMO_ONLY_ACTIONS: Action['type'][] = ['reset', 'demoStartDay', 'supervisorApprove', 'approveVerification'];
 
 /**
  * Applies an action and returns the new state. Throws DomainError if the action is not allowed.
@@ -65,10 +95,11 @@ export function reduce(prev: AppState, action: Action, now = Date.now(), nonce?:
   let n = 0;
   const id = (p: string) => (nonce ? `${p}-${nonce}-${n++}` : `${p}-${now.toString(36)}-${s.seq++}`);
   if (nonce) s.seq++;
+  const today = dayKey(new Date(now));
   const me = (): User => (s.sessionUserId && s.users[s.sessionUserId]) || fail('Please sign in first.');
   const meAs = <R extends User['role']>(role: R) => {
     const u = me();
-    if (u.role !== role) fail(`Only ${role}s can do that.`);
+    if (u.role !== role) fail(`Only ${role === 'company' ? 'tool companies' : role + 's'} can do that.`);
     return u as Extract<User, { role: R }>;
   };
   const name = (uid: string) => s.users[uid]?.name ?? 'Someone';
@@ -78,11 +109,13 @@ export function reduce(prev: AppState, action: Action, now = Date.now(), nonce?:
     (s.txns[uid] ??= []).unshift({ id: id('x'), label, amount, kind, at: now });
   };
   const credit = (uid: string, amount: number, label: string) => {
+    if (amount <= 0) return;
     s.wallets[uid] = (s.wallets[uid] ?? 0) + amount;
     txn(uid, label, amount, 'in');
   };
   const debit = (uid: string, amount: number, label: string, kind: TxnKind = 'out') => {
-    if ((s.wallets[uid] ?? 0) < amount) fail(`Your wallet needs ${formatNaira(amount - (s.wallets[uid] ?? 0))} more.`);
+    if (amount <= 0) return;
+    if ((s.wallets[uid] ?? 0) < amount) fail(`Your wallet needs ${formatNaira(amount - (s.wallets[uid] ?? 0))} more. Top up and try again.`);
     s.wallets[uid] -= amount;
     txn(uid, label, amount, kind);
   };
@@ -103,6 +136,13 @@ export function reduce(prev: AppState, action: Action, now = Date.now(), nonce?:
     if (j.clientId !== c.id) fail('Only the client who posted this job can do that.');
     return c;
   };
+  const artisansFor = (j: Job) =>
+    Object.values(s.users).filter((u): u is Artisan => u.role === 'artisan' && artisanQualifies(u, j) && !j.noShows.some((x) => x.artisanId === u.id));
+  const vendorsIn = (city: City) => Object.values(s.users).filter((u): u is Vendor => u.role === 'vendor' && u.city === city && u.verification.status === 'verified');
+  const refundEscrow = (j: Job, label: string) => {
+    credit(j.clientId, j.escrow, label);
+    j.escrow = 0;
+  };
 
   switch (action.type) {
     case 'signIn':
@@ -122,9 +162,9 @@ export function reduce(prev: AppState, action: Action, now = Date.now(), nonce?:
     }
     case 'topUp': {
       const u = me();
-      if (u.role === 'artisan') fail('Artisans are paid through jobs. Top-ups are for clients and tool companies.');
+      if (u.role === 'artisan' || u.role === 'vendor') fail('Top-ups are for clients and tool companies. You are paid through jobs.');
       if (!(action.amount > 0)) fail('Enter an amount.');
-      credit(u.id, action.amount, `Top-up from ${u.role === 'client' || u.role === 'company' ? u.bank.split(' ')[0] : 'bank'}`);
+      credit(u.id, action.amount, `Top-up from ${u.bank.split(' ')[0]}`);
       break;
     }
     case 'withdraw': {
@@ -134,125 +174,183 @@ export function reduce(prev: AppState, action: Action, now = Date.now(), nonce?:
       break;
     }
 
-    /* ---------- jobs ---------- */
+    /* ---------- posting & bidding ---------- */
     case 'postJob': {
       const c = meAs('client');
       const d = action.draft;
       if (!d.title.trim()) fail('Add a short job title so artisans know what you need.');
-      if (!d.desc.trim()) fail('Describe the work so artisans know what to expect.');
+      if (d.desc.trim().length < MIN_DESCRIPTION) fail(`Describe the job in more detail (at least ${MIN_DESCRIPTION} characters): sizes, quantities, what is broken and what you want.`);
       if (!d.addr.trim()) fail('Add the address where the work will happen.');
-      if (d.schedule.mode === 'Flexible' && !d.schedule.days.length) fail('Pick at least one day on the calendar.');
+      if (!d.preferredDays.length) fail('Pick at least one day for the work.');
+      const earliest = earliestWorkDay(now);
+      if (d.preferredDays.some((x) => x < earliest)) fail('Work can only be booked at least 24 hours after you post, so vendors can buy and deliver the materials.');
       if (!d.honest) fail('Tick the box to confirm your description is truthful.');
-      const deposit = tierPrices(d.category)[d.tier];
-      const ref = 'PH-' + (4200 + s.seq);
-      debit(c.id, deposit, `Held for · ${d.title.trim()}`, 'hold');
       const j: Job = {
-        id: id('j'), ref, clientId: c.id, title: d.title.trim(), desc: d.desc.trim(), addr: d.addr.trim(), category: d.category, tier: d.tier,
-        deposit, escrow: deposit, schedule: d.schedule, photos: d.photos, status: 'open', proposals: [], invitedArtisanId: d.invitedArtisanId,
-        history: [], createdAt: now,
+        id: id('j'), ref: 'PH-' + (4200 + s.seq), clientId: c.id, city: c.city, title: d.title.trim(), desc: d.desc.trim(), addr: d.addr.trim(), category: d.category, tier: d.tier,
+        preferredDays: d.preferredDays.slice().sort(), media: d.media, status: 'open', bids: [], invitedArtisanId: d.invitedArtisanId,
+        escrow: 0, deliveredMaterials: [], noShows: [], history: [], createdAt: now,
       };
-      log(j, `${formatNaira(deposit)} paid into Allyfe`, c.name);
+      log(j, 'Job posted', c.name);
       s.jobs.unshift(j);
-      const targets = d.invitedArtisanId
-        ? [d.invitedArtisanId]
-        : Object.values(s.users).filter((u): u is Artisan => u.role === 'artisan' && u.categories.includes(d.category) && artisanQualifies(u, d.tier)).map((a) => a.id);
-      targets.forEach((aid) =>
-        alert(aid, d.invitedArtisanId ? `${c.name} wants to book you: ${j.title}. ${formatNaira(deposit)} is held.` : `New ${d.category.toLowerCase()} job near you: ${j.title}.`, j.id),
-      );
+      const targets = d.invitedArtisanId ? [d.invitedArtisanId] : artisansFor(j).map((a) => a.id);
+      targets.forEach((aid) => alert(aid, d.invitedArtisanId ? `${c.name} wants you for “${j.title}”. Send your quotation.` : `New ${d.category.toLowerCase()} job in ${c.city}: “${j.title}”. Read it and send your quotation.`, j.id));
       break;
     }
     case 'cancelJob': {
       const j = job(action.jobId);
       const c = ownClient(j);
       expect(j, 'open');
-      credit(c.id, j.escrow, `Refund · ${j.title}`);
-      j.escrow = 0;
+      if (j.escrow) refundEscrow(j, `Refund · ${j.title}`);
       j.status = 'cancelled';
-      log(j, 'Cancelled by client · deposit refunded', c.name);
-      j.proposals.forEach((p) => p.status === 'pending' && alert(p.artisanId, `${c.name} cancelled “${j.title}”.`, j.id));
+      log(j, 'Cancelled by client', c.name);
+      j.bids.forEach((b) => b.status === 'pending' && alert(b.artisanId, `${c.name} cancelled “${j.title}”.`, j.id));
       break;
     }
-    case 'submitProposal': {
+    case 'submitBid': {
       const a = meAs('artisan');
       const j = job(action.jobId);
       expect(j, 'open');
-      if (a.verification.status !== 'verified') fail('Finish verification before applying for jobs.');
+      if (a.verification.status !== 'verified') fail('Finish verification before bidding on jobs.');
       if (j.invitedArtisanId && j.invitedArtisanId !== a.id) fail('This job was sent to a specific artisan.');
-      if (!artisanQualifies(a, j.tier)) fail(`${j.tier} jobs need a rating of 4.7★ or more.`);
-      if (j.proposals.some((p) => p.artisanId === a.id && p.status !== 'declined')) fail('You have already applied for this job.');
-      const amount = action.kind === 'apply' ? j.deposit : Math.round(action.amount);
-      if (!(amount > 0)) fail('Enter your price.');
-      if (action.kind === 'propose' && !action.message.trim()) fail('Explain your price so the client can compare.');
-      const p: Proposal = { id: id('pr'), artisanId: a.id, kind: action.kind, amount, message: action.message.trim(), startDay: action.startDay, status: 'pending', at: now };
-      j.proposals.push(p);
-      alert(j.clientId, action.kind === 'apply' ? `${a.name} applied for “${j.title}” at your price.` : `${a.name} sent a proposal of ${formatNaira(amount)} for “${j.title}”.`, j.id);
+      if (j.noShows.some((x) => x.artisanId === a.id)) fail('You missed this job before, so you cannot bid on it again.');
+      if (!artisanQualifies(a, j)) fail(a.city !== j.city ? `This job is in ${j.city}. You can only bid in ${a.city}.` : `${j.tier} jobs need a rating of 4.7★ or more.`);
+      if (j.bids.some((b) => b.artisanId === a.id && b.status === 'pending')) fail('You have already bid on this job.');
+      const b = action.bid;
+      const lines: QuoteLine[] = b.lines.map((l) => {
+        const qty = Math.round(l.qty);
+        if (!(qty >= 1 && qty <= 9999)) fail('Each material needs a quantity of at least 1.');
+        if (l.key.startsWith('custom:')) {
+          if (!l.name.trim()) fail('Give each extra material a name.');
+          if (!(l.unitPrice > 0)) fail(`Add a price for ${l.name.trim()}.`);
+          return { key: customKey(l.name), name: l.name.trim(), unit: l.unit.trim() || 'item', unitPrice: Math.round(l.unitPrice), qty };
+        }
+        const item = catalogItem(j.category, l.key) || fail('One of the materials is not on the list for this job type.');
+        return { key: item.key, name: item.name, unit: item.unit, unitPrice: item.price, qty };
+      });
+      if (!(b.serviceFee > 0)) fail('Set your service fee.');
+      if (!j.preferredDays.includes(b.day)) fail('Pick one of the days the client chose.');
+      if (b.day < today) fail('That day has passed. Pick another.');
+      j.bids.push({ id: id('b'), artisanId: a.id, lines, serviceFee: Math.round(b.serviceFee), day: b.day, message: b.message.trim(), status: 'pending', at: now });
+      alert(j.clientId, `${a.name} sent a quotation of ${formatNaira(linesTotal(lines) + b.serviceFee)} for “${j.title}”.`, j.id);
       break;
     }
-    case 'declineInvite': {
-      const a = meAs('artisan');
-      const j = job(action.jobId);
-      expect(j, 'open');
-      if (j.invitedArtisanId !== a.id) fail('This job was not sent to you.');
-      j.invitedArtisanId = undefined;
-      log(j, `${a.name} could not take it · now open to all artisans`, a.name);
-      alert(j.clientId, `${a.name} could not take “${j.title}”. It is now open to other verified artisans.`, j.id);
-      break;
-    }
-    case 'confirmProposal': {
+    case 'acceptBid': {
       const j = job(action.jobId);
       const c = ownClient(j);
       expect(j, 'open');
-      const p = j.proposals.find((x) => x.id === action.proposalId) || fail('That proposal was withdrawn.');
-      if (p.status !== 'pending') fail('That proposal is no longer available.');
-      const diff = p.amount - j.escrow;
-      if (diff > 0) debit(c.id, diff, `Extra held for · ${j.title}`, 'hold');
-      if (diff < 0) credit(c.id, -diff, `Difference returned · ${j.title}`);
-      j.escrow = p.amount;
-      j.agreedAmount = p.amount;
-      j.agreedDay = p.startDay;
-      j.artisanId = p.artisanId;
-      j.status = 'confirmed';
-      j.proposals.forEach((x) => {
-        if (x.id === p.id) x.status = 'accepted';
+      const b = j.bids.find((x) => x.id === action.bidId) || fail('That bid was withdrawn.');
+      if (b.status !== 'pending') fail('That bid is no longer available.');
+      if (b.day < today) fail('The day in this bid has passed. Ask for a new bid.');
+      const charge = bidCharge(j, b);
+      if (charge.due > 0) debit(c.id, charge.due, `Paid into Allyfe · ${j.title}`, 'hold');
+      if (charge.due < 0) credit(c.id, -charge.due, `Difference returned · ${j.title}`);
+      j.escrow = charge.total;
+      j.serviceFee = b.serviceFee;
+      j.artisanId = b.artisanId;
+      j.acceptedBidId = b.id;
+      j.scheduledDay = b.day;
+      j.bids.forEach((x) => {
+        if (x.id === b.id) x.status = 'accepted';
         else if (x.status === 'pending') {
           x.status = 'declined';
           alert(x.artisanId, `${c.name} chose another artisan for “${j.title}”.`, j.id);
         }
       });
-      log(j, `Confirmed ${name(p.artisanId)} at ${formatNaira(p.amount)}`, c.name);
-      alert(p.artisanId, `${c.name} confirmed you for “${j.title}”. ${formatNaira(p.amount)} is held for you. Address: ${j.addr}.`, j.id);
+      log(j, `Accepted ${name(b.artisanId)}'s bid · ${formatNaira(charge.total)} held by Allyfe`, c.name);
+      if (charge.billable.length) {
+        j.materialsOrder = { id: id('o'), lines: charge.billable, total: charge.materials, status: 'open', at: now };
+        j.status = 'awarded';
+        vendorsIn(j.city).forEach((v) => alert(v.id, `New materials request in ${j.city}: ${formatNaira(charge.materials)} for “${j.title}”.`, j.id));
+        alert(b.artisanId, `${c.name} accepted your bid for “${j.title}”. A vendor will deliver the materials; you start on ${b.day}.`, j.id);
+      } else {
+        j.materialsOrder = undefined;
+        j.status = 'ready';
+        log(j, 'All materials already at the client’s home', 'Allyfe');
+        alert(b.artisanId, `${c.name} accepted your bid for “${j.title}”. Materials are already on site. Start on ${b.day}. Address: ${j.addr}.`, j.id);
+      }
       break;
     }
+
+    /* ---------- vendors ---------- */
+    case 'vendorAcceptOrder': {
+      const v = meAs('vendor');
+      const j = job(action.jobId);
+      expect(j, 'awarded');
+      const o = j.materialsOrder!;
+      if (v.verification.status !== 'verified') fail('Finish verification before taking orders.');
+      if (v.city !== j.city) fail(`This order is in ${j.city}. You supply ${v.city}.`);
+      if (o.status !== 'open') fail('Another vendor has already taken this order.');
+      o.status = 'accepted';
+      o.vendorId = v.id;
+      log(j, `${v.name} is supplying the materials`, v.name);
+      alert(j.clientId, `${v.name} will deliver the materials for “${j.title}” to your home.`, j.id);
+      alert(j.artisanId!, `${v.name} is supplying the materials for “${j.title}”.`, j.id);
+      vendorsIn(j.city).filter((x) => x.id !== v.id).forEach((x) => alert(x.id, `The materials request for “${j.title}” was taken by another vendor.`, j.id));
+      break;
+    }
+    case 'vendorDispatch': {
+      const v = meAs('vendor');
+      const j = job(action.jobId);
+      expect(j, 'awarded');
+      const o = j.materialsOrder!;
+      if (o.vendorId !== v.id) fail('This order belongs to another vendor.');
+      if (!action.waybill.trim()) fail('Add the waybill or rider details so the client knows what to expect.');
+      o.status = 'dispatched';
+      o.waybill = action.waybill.trim();
+      j.status = 'materials_on_the_way';
+      log(j, `Materials dispatched · ${o.waybill}`, v.name);
+      alert(j.clientId, `Materials for “${j.title}” are on the way: ${o.waybill}. Tap “I’ve received the materials” when they arrive.`, j.id);
+      break;
+    }
+    case 'confirmMaterials': {
+      const j = job(action.jobId);
+      const c = ownClient(j);
+      expect(j, 'materials_on_the_way');
+      const o = j.materialsOrder!;
+      o.status = 'delivered';
+      j.escrow -= o.total;
+      credit(o.vendorId!, o.total, `Materials · ${j.title}`);
+      txn(c.id, `Materials paid to ${name(o.vendorId!)}`, o.total, 'out');
+      j.deliveredMaterials.push(...o.lines);
+      j.status = 'ready';
+      log(j, 'Client received the materials', c.name);
+      alert(o.vendorId!, `${c.name} received the materials. ${formatNaira(o.total)} is in your wallet.`, j.id);
+      alert(j.artisanId!, `Materials for “${j.title}” are at the client's home. Go and start work on ${j.scheduledDay}. Address: ${j.addr}.`, j.id);
+      break;
+    }
+
+    /* ---------- the work ---------- */
     case 'startWork': {
       const j = job(action.jobId);
       const a = assignedArtisan(j);
-      expect(j, 'confirmed');
+      expect(j, 'ready');
+      if (!isOnOrAfterDay(j.scheduledDay!, now)) fail(`You can start on the scheduled day, ${j.scheduledDay}.`);
       j.status = 'in_progress';
-      log(j, 'Arrived · job matches · work started', a.name);
-      alert(j.clientId, `${a.name} arrived and started work on “${j.title}”.`, j.id);
+      log(j, 'Work started', a.name);
+      alert(j.clientId, `${a.name} has started work on “${j.title}”.`, j.id);
       break;
     }
     case 'flagMisdescribed': {
       const j = job(action.jobId);
       const a = assignedArtisan(j);
-      expect(j, 'confirmed');
-      const split = misdescribedSplit(j.escrow);
-      credit(a.id, split.artisan, `Visit fee (50%) · ${j.title}`);
-      credit(j.clientId, split.clientRefund, `50% refund · ${j.title}`);
-      txn(j.clientId, `50% visit fee to ${a.name}`, split.artisan, 'out');
-      j.escrow = 0;
+      expect(j, 'ready');
+      const split = misdescribedSplit(j.serviceFee!);
+      credit(a.id, split.artisan, `Visit fee (50% of service fee) · ${j.title}`);
+      txn(j.clientId, `50% of service fee to ${a.name} for the visit`, split.artisan, 'out');
+      j.escrow -= split.artisan;
+      refundEscrow(j, `Refund · ${j.title}`);
       j.status = 'not_as_described';
-      log(j, 'Marked not as described', a.name);
-      alert(j.clientId, `${a.name} marked “${j.title}” not as described. ${formatNaira(split.artisan)} went to them for the visit and ${formatNaira(split.clientRefund)} came back to you.`, j.id);
+      log(j, 'Artisan found the job not as described', a.name);
+      alert(j.clientId, `${a.name} found “${j.title}” different from your description. ${formatNaira(split.artisan)} went to them for the visit and ${formatNaira(split.clientRefund)} came back to you. The materials stay with you.`, j.id);
       break;
     }
-    case 'markDone': {
+    case 'finishWork': {
       const j = job(action.jobId);
       const a = assignedArtisan(j);
       expect(j, 'in_progress');
       j.status = j.tier === 'Premium' ? 'supervisor_check' : 'awaiting_client';
-      log(j, j.tier === 'Premium' ? 'Work marked done · supervisor inspecting' : 'Work marked done', a.name);
-      alert(j.clientId, `${a.name} says “${j.title}” is done. ${j.tier === 'Premium' ? 'Your Allyfe supervisor is inspecting it.' : 'Please check the work.'}`, j.id);
+      log(j, j.tier === 'Premium' ? 'Work finished · supervisor inspecting' : 'Work finished', a.name);
+      alert(j.clientId, `${a.name} has finished “${j.title}”. ${j.tier === 'Premium' ? 'Your Allyfe supervisor is inspecting it.' : 'Check the work and tap Job done to pay them.'}`, j.id);
       break;
     }
     case 'supervisorApprove': {
@@ -260,7 +358,7 @@ export function reduce(prev: AppState, action: Action, now = Date.now(), nonce?:
       expect(j, 'supervisor_check');
       j.status = 'awaiting_client';
       log(j, 'Supervisor approved the work', 'Allyfe supervisor');
-      alert(j.clientId, `Your Allyfe supervisor approved the work on “${j.title}”. Please confirm.`, j.id);
+      alert(j.clientId, `Your Allyfe supervisor approved the work on “${j.title}”. Tap Job done to pay the artisan.`, j.id);
       break;
     }
     case 'notFinished': {
@@ -268,14 +366,14 @@ export function reduce(prev: AppState, action: Action, now = Date.now(), nonce?:
       const c = ownClient(j);
       expect(j, 'awaiting_client');
       j.status = 'in_progress';
-      log(j, 'Client says not finished yet', c.name);
+      log(j, 'Client says the work is not finished', c.name);
       alert(j.artisanId!, `${c.name} says “${j.title}” is not finished yet.`, j.id);
       break;
     }
     case 'raiseConcern': {
       const j = job(action.jobId);
       const c = ownClient(j);
-      expect(j, 'awaiting_client', 'not_as_described', 'in_progress');
+      expect(j, 'awaiting_client', 'not_as_described', 'in_progress', 'no_show');
       j.status = 'disputed';
       log(j, 'Concern raised · Allyfe is reviewing', c.name);
       if (j.artisanId) alert(j.artisanId, `${c.name} raised a concern on “${j.title}”. An Allyfe admin will contact you.`, j.id);
@@ -293,27 +391,118 @@ export function reduce(prev: AppState, action: Action, now = Date.now(), nonce?:
         credit(x.companyId, x.amount, `Rental · ${tool?.name ?? 'tool'} · job ${j.ref}`);
         alert(x.companyId, `${formatNaira(x.amount)} credited for the ${tool?.name ?? 'tool'} rental.`);
       });
-      // Requests still waiting for the company can no longer be paid from this job.
       s.rentals.filter((r) => r.jobId === j.id && r.status === 'requested').forEach((r) => (r.status = 'declined'));
       const a = s.users[j.artisanId!] as Artisan;
-      credit(a.id, split.artisan, `Payment · ${j.title}`);
+      credit(a.id, split.artisan, `Service fee · ${j.title}`);
       a.jobsDone += 1;
-      txn(c.id, `Released · ${j.title}`, j.escrow, 'out');
+      txn(c.id, `Service fee released · ${j.title}`, j.escrow, 'out');
       j.escrow = 0;
       j.status = 'completed';
-      log(j, 'Work completed · payment released', c.name);
+      log(j, 'Job done · artisan paid', c.name);
       alert(a.id, `${c.name} confirmed the work. ${formatNaira(split.artisan)} is in your wallet.`, j.id);
       break;
     }
-    case 'submitReview': {
+    case 'rateJob': {
       const j = job(action.jobId);
       const c = ownClient(j);
       expect(j, 'completed');
-      if (j.review) fail('You have already rated this job.');
+      if (j.rating) fail('You have already rated this job.');
+      const stars = jobStars(action.work, action.attitude);
       const a = s.users[j.artisanId!] as Artisan;
-      [a.rating, a.ratingCount] = addRating(a.rating, a.ratingCount, action.stars);
-      j.review = { stars: action.stars, text: action.text.trim(), at: now };
-      alert(a.id, `${c.name} rated you ★ ${action.stars}${action.text.trim() ? `: “${action.text.trim()}”` : '.'}`, j.id);
+      [a.rating, a.ratingCount] = addRating(a.rating, a.ratingCount, stars);
+      j.rating = { work: action.work, attitude: action.attitude, stars, text: action.text.trim(), at: now };
+      log(j, `Rated ★ ${stars}`, c.name);
+      alert(a.id, `${c.name} rated you ★ ${stars} for “${j.title}”${action.text.trim() ? `: “${action.text.trim()}”` : '.'}`, j.id);
+      break;
+    }
+
+    /* ---------- no-shows, refunds and replacements ---------- */
+    case 'reportNoShow': {
+      const j = job(action.jobId);
+      const c = ownClient(j);
+      expect(j, 'ready');
+      if (!isOnOrAfterDay(j.scheduledDay!, now)) fail(`The artisan is due on ${j.scheduledDay}. You can report a no-show from that day.`);
+      const a = s.users[j.artisanId!] as Artisan;
+      [a.rating, a.ratingCount] = addRating(a.rating, a.ratingCount, NO_SHOW_STARS);
+      j.noShows.push({ artisanId: a.id, at: now });
+      j.status = 'no_show';
+      log(j, `${a.name} didn't show up · rated ★ ${NO_SHOW_STARS}`, c.name);
+      alert(a.id, `${c.name} reported that you didn't show up for “${j.title}”. A 1★ rating was added to your profile.`, j.id);
+      break;
+    }
+    case 'requestRefund': {
+      const j = job(action.jobId);
+      const c = ownClient(j);
+      expect(j, 'no_show', 'awarded');
+      const o = j.materialsOrder;
+      if (j.status === 'awarded' && o?.status === 'accepted') {
+        alert(o.vendorId!, `${c.name} cancelled “${j.title}” before delivery. Please don't send the materials.`, j.id);
+      }
+      if (o && o.status !== 'delivered') o.status = 'cancelled';
+      const amount = j.escrow;
+      refundEscrow(j, `Refund · ${j.title}`);
+      j.status = 'refunded';
+      log(j, `Refund of ${formatNaira(amount)}${j.deliveredMaterials.length ? ' · delivered materials are not refundable' : ''}`, c.name);
+      if (j.artisanId && j.noShows.every((x) => x.artisanId !== j.artisanId)) alert(j.artisanId, `${c.name} cancelled “${j.title}”.`, j.id);
+      break;
+    }
+    case 'chooseAnotherArtisan': {
+      const j = job(action.jobId);
+      const c = ownClient(j);
+      expect(j, 'no_show');
+      j.status = 'open';
+      j.artisanId = undefined;
+      j.acceptedBidId = undefined;
+      j.scheduledDay = undefined;
+      j.serviceFee = undefined;
+      j.materialsOrder = undefined;
+      j.invitedArtisanId = undefined;
+      const earliest = earliestWorkDay(now);
+      j.preferredDays = j.preferredDays.filter((x) => x >= earliest);
+      if (!j.preferredDays.length) j.preferredDays = [earliest];
+      log(j, `Looking for another artisan · ${formatNaira(j.escrow)} still held`, c.name);
+      artisansFor(j).forEach((a) => alert(a.id, `A ${j.category.toLowerCase()} job in ${j.city} needs a new artisan: “${j.title}”. Some materials are already on site.`, j.id));
+      break;
+    }
+    case 'demoStartDay': {
+      const j = job(action.jobId);
+      if (!j.scheduledDay) fail('This job has no scheduled day yet.');
+      j.scheduledDay = today;
+      log(j, 'Demo: moved the scheduled day to today', 'Allyfe');
+      break;
+    }
+
+    /* ---------- profile, team & apprentices ---------- */
+    case 'updateProfile': {
+      const a = meAs('artisan');
+      a.kind = action.kind;
+      if (action.kind === 'team') {
+        if (!action.teamName.trim()) fail('Give your team a name.');
+        const members = action.teamMembers.map((m) => m.trim()).filter(Boolean);
+        if (members.length < 2) fail('A team needs at least 2 members.');
+        a.teamName = action.teamName.trim();
+        a.teamMembers = members;
+      } else {
+        a.teamName = undefined;
+        a.teamMembers = [];
+      }
+      a.bio = action.bio.trim() || a.bio;
+      break;
+    }
+    case 'addApprentice': {
+      const a = meAs('artisan');
+      if (!action.name.trim()) fail("Add your apprentice's name.");
+      const phone = action.phone.replace(/\D/g, '');
+      if (phone.length < 10) fail("Add your apprentice's phone number. It links your work to their profile later.");
+      if (!action.photo) fail('Add a photo of your apprentice.');
+      if (a.apprentices.some((x) => x.phone.replace(/\D/g, '') === phone)) fail('That apprentice is already on your list.');
+      const ap: Apprentice = { id: id('ap'), name: action.name.trim(), phone: action.phone.trim(), photo: action.photo, addedAt: now };
+      a.apprentices.push(ap);
+      break;
+    }
+    case 'removeApprentice': {
+      const a = meAs('artisan');
+      a.apprentices = a.apprentices.filter((x) => x.id !== action.apprenticeId);
       break;
     }
 
@@ -336,11 +525,10 @@ export function reduce(prev: AppState, action: Action, now = Date.now(), nonce?:
     }
     case 'approveVerification': {
       const u = s.users[action.userId];
-      if (!u || u.role === 'client') fail('Nothing to approve.');
-      const v = (u as Artisan | Company).verification;
-      if (v.status !== 'review') fail('Submit the documents first.');
-      v.status = 'verified';
-      alert(u.id, u.role === 'company' ? `${u.name} is verified. Your tools are now in the Tool Store.` : 'You are verified. Clients can now book you.');
+      if (!u || u.role === 'client') return fail('Nothing to approve.');
+      if (u.verification.status !== 'review') fail('Submit the documents first.');
+      u.verification.status = 'verified';
+      alert(u.id, u.role === 'artisan' ? 'You are verified. Clients can now find you and you can bid on jobs.' : `${u.name} is verified.`);
       break;
     }
 
@@ -357,7 +545,7 @@ export function reduce(prev: AppState, action: Action, now = Date.now(), nonce?:
         assignedArtisan(j);
         expect(j, 'in_progress');
         const committed = jobToolCost(j.id, s.rentals) + s.rentals.filter((r) => r.jobId === j.id && r.status === 'requested').reduce((t, r) => t + r.fee, 0);
-        if (committed + fee > j.escrow) fail('Tool rentals cannot cost more than the job pays.');
+        if (committed + fee > j.escrow) fail('Tool rentals cannot cost more than your service fee.');
       } else {
         debit(a.id, fee, `Rental held · ${tool.name}`, 'hold');
       }
@@ -425,7 +613,7 @@ export function reduce(prev: AppState, action: Action, now = Date.now(), nonce?:
   return s;
 }
 
-export const VERIFICATION_ITEMS: Record<'artisan' | 'company', { key: string; title: string; hint: string }[]> = {
+export const VERIFICATION_ITEMS: Record<'artisan' | 'company' | 'vendor', { key: string; title: string; hint: string }[]> = {
   artisan: [
     { key: 'id', title: 'Government ID', hint: "NIN slip, driver's licence or voter's card" },
     { key: 'selfie', title: 'Selfie holding your ID', hint: 'So we know the ID is yours' },
@@ -438,5 +626,11 @@ export const VERIFICATION_ITEMS: Record<'artisan' | 'company', { key: string; ti
     { key: 'shop', title: 'Photo of your shop or yard', hint: 'Showing your signboard' },
     { key: 'owner', title: 'Owner or manager ID', hint: "NIN slip, driver's licence or passport" },
     { key: 'w1', title: 'Photo of your tools', hint: 'With your company name visible' },
+  ],
+  vendor: [
+    { key: 'cac', title: 'CAC or market association certificate', hint: 'Photo or scan of the certificate' },
+    { key: 'shop', title: 'Photo of your shop', hint: 'Showing your signboard and market' },
+    { key: 'owner', title: 'Owner ID', hint: "NIN slip, driver's licence or passport" },
+    { key: 'w1', title: 'Photo of your stock', hint: 'Materials you sell' },
   ],
 };

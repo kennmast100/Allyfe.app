@@ -12,22 +12,25 @@ export type Route =
   | { name: 'jobPosted'; jobId: string }
   | { name: 'projects' }
   | { name: 'job'; jobId: string }
-  | { name: 'confirm'; jobId: string; proposalId: string }
-  | { name: 'completed'; jobId: string }
-  | { name: 'review'; jobId: string }
-  | { name: 'jobs'; tab?: 'new' | 'applied' | 'mine' }
-  | { name: 'proposal'; jobId: string; kind: 'apply' | 'propose' }
+  | { name: 'bid'; jobId: string; bidId: string }
+  | { name: 'rate'; jobId: string }
+  | { name: 'jobs'; tab?: 'new' | 'bids' | 'mine' }
+  | { name: 'quote'; jobId: string }
   | { name: 'applied'; jobId: string }
   | { name: 'verify' }
+  | { name: 'profileEdit' }
   | { name: 'store'; jobId?: string }
   | { name: 'rent'; toolId: string; jobId?: string }
   | { name: 'requests' }
   | { name: 'tools' }
+  | { name: 'orders'; tab?: 'new' | 'mine' }
+  | { name: 'order'; jobId: string }
   | { name: 'feed' }
   | { name: 'composer' }
   | { name: 'comments'; postId: string }
   | { name: 'wallet' }
   | { name: 'alerts' }
+  | { name: 'terms' }
   | { name: 'me' };
 
 export type RouteName = Route['name'];
@@ -223,7 +226,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
 }
 
 /** Tab roots reset the back stack. */
-export const TAB_ROOTS: RouteName[] = ['home', 'discover', 'projects', 'jobs', 'feed', 'wallet', 'requests', 'tools', 'me'];
+export const TAB_ROOTS: RouteName[] = ['home', 'discover', 'projects', 'jobs', 'feed', 'wallet', 'requests', 'tools', 'orders', 'me'];
 
 export function useApp() {
   const c = useContext(AppCtx);

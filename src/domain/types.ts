@@ -1,6 +1,7 @@
-export type Role = 'client' | 'artisan' | 'company';
+export type Role = 'client' | 'artisan' | 'company' | 'vendor';
 export type Tier = 'Basic' | 'Pro' | 'Premium';
 export type Category = 'Home Renovation' | 'Interior Design' | 'Plumbing' | 'Electrical' | 'Painting';
+export type City = 'Port Harcourt' | 'Lagos' | 'Abuja' | 'Aba';
 
 export type AvatarSpec = {
   bg: string;
@@ -10,18 +11,21 @@ export type AvatarSpec = {
   vest?: boolean;
 };
 
-/** Built-in illustration keys, or a data: URL from a real upload. */
+/** A built-in illustration key, or a data: URL from a real upload (photo or video). */
 export type ImageRef = string;
 
 export type VerificationStatus = 'none' | 'partial' | 'review' | 'verified';
 export type Verification = { status: VerificationStatus; files: Record<string, ImageRef> };
 
-export type BaseUser = { id: string; role: Role; name: string; phone: string; avatar: AvatarSpec; area: string };
+export type BaseUser = { id: string; role: Role; name: string; phone: string; avatar: AvatarSpec; area: string; city: City };
 export type Client = BaseUser & { role: 'client'; bank: string };
+
+export type Apprentice = { id: string; name: string; phone: string; photo: ImageRef; addedAt: number };
 export type Artisan = BaseUser & {
   role: 'artisan';
   trade: string;
   categories: Category[];
+  /** Average of per-job stars (each job is the mean of two 1–5 answers, so halves are possible). */
   rating: number;
   ratingCount: number;
   jobsDone: number;
@@ -30,62 +34,90 @@ export type Artisan = BaseUser & {
   work: ImageRef[];
   bank: string;
   verification: Verification;
+  /** An individual, or a construction team working under one account. */
+  kind: 'individual' | 'team';
+  teamName?: string;
+  teamMembers: string[];
+  apprentices: Apprentice[];
 };
 export type Company = BaseUser & { role: 'company'; bank: string; verification: Verification };
-export type User = Client | Artisan | Company;
+/** Market vendor: supplies the materials in an accepted quotation and delivers them to the client. */
+export type Vendor = BaseUser & { role: 'vendor'; bank: string; verification: Verification; market: string };
+export type User = Client | Artisan | Company | Vendor;
 
-export type ScheduleMode = 'This week' | 'Next week' | 'Flexible';
-export type Schedule = { mode: ScheduleMode; days: string[] };
+/** One line of an artisan's quotation: a catalogue item or a custom item. */
+export type QuoteLine = { key: string; name: string; unit: string; unitPrice: number; qty: number };
 
-export type JobStatus =
-  | 'open' // posted, deposit held, collecting proposals
-  | 'confirmed' // client picked an artisan
-  | 'in_progress'
-  | 'supervisor_check' // Premium only
-  | 'awaiting_client' // artisan says done
-  | 'completed'
-  | 'not_as_described'
-  | 'disputed'
-  | 'cancelled';
-
-export type ProposalKind = 'apply' | 'propose';
-export type Proposal = {
+export type BidStatus = 'pending' | 'accepted' | 'declined';
+export type Bid = {
   id: string;
   artisanId: string;
-  kind: ProposalKind;
-  amount: number;
+  lines: QuoteLine[];
+  serviceFee: number;
+  day: string;
   message: string;
-  startDay?: string;
-  status: 'pending' | 'accepted' | 'declined';
+  status: BidStatus;
   at: number;
 };
 
+export type OrderStatus = 'open' | 'accepted' | 'dispatched' | 'delivered' | 'cancelled';
+export type MaterialOrder = {
+  id: string;
+  lines: QuoteLine[];
+  total: number;
+  status: OrderStatus;
+  vendorId?: string;
+  waybill?: string;
+  at: number;
+};
+
+export type JobStatus =
+  | 'open' // collecting bids
+  | 'awarded' // bid accepted and paid; waiting for a vendor
+  | 'materials_on_the_way'
+  | 'ready' // materials at the client's home; artisan starts on the scheduled day
+  | 'in_progress'
+  | 'supervisor_check' // Premium only
+  | 'awaiting_client' // artisan finished; client must confirm
+  | 'completed'
+  | 'not_as_described'
+  | 'no_show' // artisan didn't come; client chooses refund or another artisan
+  | 'refunded'
+  | 'disputed'
+  | 'cancelled';
+
 export type HistoryEntry = { label: string; by: string; at: number };
+export type JobRating = { work: number; attitude: number; stars: number; text: string; at: number };
 
 export type Job = {
   id: string;
   ref: string;
   clientId: string;
+  city: City;
   title: string;
   desc: string;
   addr: string;
   category: Category;
   tier: Tier;
-  /** What the client paid into Allyfe when posting. */
-  deposit: number;
-  /** Money Allyfe is currently holding for this job. */
-  escrow: number;
-  schedule: Schedule;
-  photos: ImageRef[];
+  /** Days the client can host the work. Each is at least 24 hours after posting. */
+  preferredDays: string[];
+  media: ImageRef[];
   status: JobStatus;
-  proposals: Proposal[];
-  /** Set when the client books an artisan directly from their profile. */
+  bids: Bid[];
   invitedArtisanId?: string;
   artisanId?: string;
-  agreedAmount?: number;
-  agreedDay?: string;
+  acceptedBidId?: string;
+  scheduledDay?: string;
+  serviceFee?: number;
+  /** Money Allyfe is holding for this job right now. */
+  escrow: number;
+  materialsOrder?: MaterialOrder;
+  /** Everything vendors have already delivered to the client for this job. */
+  deliveredMaterials: QuoteLine[];
+  /** Artisans who didn't show up; they can't bid on this job again. */
+  noShows: { artisanId: string; at: number }[];
   history: HistoryEntry[];
-  review?: { stars: number; text: string; at: number };
+  rating?: JobRating;
   createdAt: number;
 };
 
@@ -100,7 +132,7 @@ export type Rental = {
   artisanId: string;
   days: number;
   fee: number;
-  /** Paid out of this job's escrow at completion; otherwise paid from the artisan's wallet up front. */
+  /** Paid out of this job's service fee at completion; otherwise paid from the artisan's wallet up front. */
   jobId?: string;
   status: RentalStatus;
   at: number;

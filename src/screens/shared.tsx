@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { Avatar, Icon, Logo, MARK_SVG, Picture, SCENE_KEYS } from '../components/art';
-import { BackBar, Empty, PhotoInput, Stars, TopBar, VTick, timeAgo } from '../components/ui';
+import { BackBar, Empty, MediaInput, Stars, TopBar, VTick, timeAgo } from '../components/ui';
 import { DEMO_ACCOUNTS } from '../domain/seed';
 import { formatNaira } from '../domain/rules';
 import type { Artisan, User } from '../domain/types';
@@ -210,12 +210,14 @@ export function Composer() {
       <div className="composer-preview">
         <Picture src={image} />
       </div>
-      <label className="f">Choose a photo</label>
+      <label className="f">
+        Choose a photo or video <em>(videos up to 20 s)</em>
+      </label>
       <div className="pick">
-        <PhotoInput label="Upload a photo" onPhoto={setImage} className="pick-up">
+        <MediaInput video label="Upload a photo or video" onMedia={setImage} className="pick-up">
           <Icon name="camera" size={22} />
           <span>Upload</span>
-        </PhotoInput>
+        </MediaInput>
         {SCENE_KEYS.slice(0, 3).map((k) => (
           <button key={k} className={image === k ? 'on' : ''} onClick={() => setImage(k)} aria-label={`Sample photo: ${k}`}>
             <Picture src={k} />
@@ -262,7 +264,7 @@ export function Wallet() {
         <div className="bal">{formatNaira(bal)}</div>
         {held > 0 && <div className="esc">{user.role === 'client' ? `${formatNaira(held)} held by Allyfe for your active jobs` : `${formatNaira(held)} on the way when clients confirm`}</div>}
         <div className="row mt12">
-          {user.role !== 'artisan' && (
+          {(user.role === 'client' || user.role === 'company') && (
             <button className="btn orange sm" onClick={() => dispatch({ type: 'topUp', amount: amt || 100000 }, `${formatNaira(amt || 100000)} added to your wallet.`) && setAmount('')}>
               Top up {amt ? formatNaira(amt) : '₦100,000'}
             </button>
@@ -394,7 +396,7 @@ export function Me() {
         <div>
           <div className="nm">{user.name}</div>
           <div className="sl">
-            {user.role === 'client' ? 'Client' : user.role === 'artisan' ? (user as Artisan).trade : 'Tool company'} · {user.area}
+            {user.role === 'client' ? 'Client' : user.role === 'artisan' ? (user as Artisan).trade : user.role === 'vendor' ? 'Market vendor' : 'Tool company'} · {user.area}
           </div>
           <div className="sl">{user.phone}</div>
         </div>
@@ -426,6 +428,13 @@ export function Me() {
           </button>
         )}
         {user.role === 'artisan' && (
+          <button className="card menu-row" onClick={() => go({ name: 'profileEdit' })}>
+            <Icon name="user" size={20} />
+            <span className="grow">Profile, team & apprentices</span>
+            <Icon name="chev" size={14} />
+          </button>
+        )}
+        {user.role === 'artisan' && (
           <button className="card menu-row" onClick={() => go({ name: 'store' })}>
             <Icon name="tools" size={20} />
             <span className="grow">Tool Store</span>
@@ -439,6 +448,11 @@ export function Me() {
             <Icon name="chev" size={14} />
           </button>
         )}
+        <button className="card menu-row" onClick={() => go({ name: 'terms' })}>
+          <Icon name="shield" size={20} />
+          <span className="grow">Terms & conditions</span>
+          <Icon name="chev" size={14} />
+        </button>
         <label className="card menu-row">
           <Icon name="wifiOff" size={20} />
           <span className="grow">Simulate offline</span>
@@ -466,6 +480,41 @@ export function Me() {
         <br />
         Skilled People • Real Work • Brighter Lives
       </p>
+    </>
+  );
+}
+
+/* ---------------- Terms ---------------- */
+export function Terms() {
+  return (
+    <>
+      <BackBar />
+      <h2>Terms & conditions</h2>
+      <p className="sub">The rules that keep Allyfe fair for clients, artisans and vendors. Summary for this test version; the full legal text follows before launch.</p>
+      <div className="terms">
+        <h4>1. Posting a job</h4>
+        <p>Describe the job truthfully and in detail, with clear photos. Blurry photos are not accepted. Videos can be at most 20 seconds. Work can be booked no sooner than 24 hours after posting, so a vendor has time to buy and deliver materials.</p>
+        <h4>2. Quotations and payment</h4>
+        <p>Artisans quote materials and a service fee. When you accept a quotation you pay the full amount into Allyfe, which holds it. Nobody is paid at that point.</p>
+        <h4>3. Materials</h4>
+        <p>The materials list goes to verified market vendors in your city. The vendor is paid when you tap “I’ve received the materials”. Check every item before you confirm.</p>
+        <h4>4. The work</h4>
+        <p>The artisan taps “Work started” on the agreed day and “Work finished” when done. The artisan is paid only when you tap “Job done”. Premium jobs are inspected by an Allyfe supervisor first.</p>
+        <h4>5. Not as described</h4>
+        <p>If the artisan arrives and the job is not what you described, they may mark it “Not as described”. You then forfeit 50% of the service fee for their visit; the other 50% is refunded. Materials already delivered stay with you.</p>
+        <h4>6. If the artisan doesn’t show up</h4>
+        <p>From the scheduled day you can report a no-show. The artisan receives a 1★ rating for that job, which counts in their average. You then choose:</p>
+        <ul>
+          <li><b>Refund:</b> everything Allyfe still holds is returned to your wallet. <b>Money for materials already delivered is not refunded</b>; the materials stay with you.</li>
+          <li><b>Another artisan:</b> new artisans bid. Materials already at your home are taken off the new quotation, and the money still held counts toward it. You pay any extra or get the difference back.</li>
+        </ul>
+        <h4>7. Cancelling before delivery</h4>
+        <p>If no materials have been delivered yet, you can cancel and get a full refund.</p>
+        <h4>8. Ratings</h4>
+        <p>After the job you answer two questions: how well the work was done, and the artisan’s attitude. Each answer is scored 1 to 5; the job’s rating is the average of the two.</p>
+        <h4>9. Location</h4>
+        <p>Jobs are only sent to artisans and vendors in the same city as the client.</p>
+      </div>
     </>
   );
 }

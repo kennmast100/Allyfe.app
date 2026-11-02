@@ -94,6 +94,7 @@ export const SCENE_KEYS = Object.keys(SCENES);
 /** Shows a built-in illustration, or a real uploaded photo (data URL). */
 export function Picture({ src, className, alt = '' }: { src: ImageRef; className?: string; alt?: string }) {
   if (src.startsWith('data:image/')) return <img className={'pic ' + (className ?? '')} src={src} alt={alt} />;
+  if (src.startsWith('data:video/')) return <video className={'pic ' + (className ?? '')} src={src} controls playsInline muted preload="metadata" aria-label={alt || 'Video'} />;
   const body = SCENES[src] ?? SCENES.room;
   return <Svg className={'pic ' + (className ?? '')} html={`<svg viewBox="0 0 160 100" preserveAspectRatio="xMidYMid slice">${body}</svg>`} />;
 }
