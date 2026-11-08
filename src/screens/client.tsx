@@ -496,7 +496,7 @@ export function PostJob({ artisanId, category }: { artisanId?: string; category?
               <li>You accept one and pay into Allyfe. Nobody is paid yet.</li>
               <li>A market vendor delivers the materials. They're paid when you tap “I've received the materials”.</li>
               <li>The artisan is paid when you tap “Job done”.</li>
-              <li>Your phone number is shared with the vendors and the artisan so they can confirm delivery and the exact materials with you.</li>
+              <li>Your phone number is shared only with the artisan you accept and the vendor who takes your materials order, so they can confirm delivery and the exact materials with you.</li>
             </ol>
           </div>
           <Notice>

@@ -533,13 +533,13 @@ export function Terms() {
         <h4>2. Quotations and payment</h4>
         <p>Artisans quote materials and a service fee. When you accept a quotation you pay the full amount into Allyfe, which holds it. Nobody is paid at that point.</p>
         <h4>3. Materials</h4>
-        <p>The materials list goes to verified market vendors in your city. Vendors can see your phone number so they can confirm delivery and the exact materials (brand, colour, texture) with you. The vendor is paid when you tap “I’ve received the materials”. Check every item before you confirm.</p>
+        <p>The materials list goes to verified market vendors in your city. Only the vendor who accepts your order sees your phone number, so they can confirm delivery and the exact materials (brand, colour, texture) with you. The vendor is paid when you tap “I’ve received the materials”. Check every item before you confirm.</p>
         <h4>Refusing materials</h4>
         <p>If the materials are wrong, damaged, short, substandard or not what was quoted, tap “I’m not happy with the materials” and choose a reason. The vendor is not paid for that delivery and, <b>under the Allyfe vendor contract, must come back and collect the goods</b> at their own cost. The order then goes back out so the right materials can be delivered.</p>
         <h4>4. The work</h4>
         <p>The artisan taps “Work started” on the agreed day and “Work finished” when done. The artisan is paid only when you tap “Job done”. Premium jobs are inspected by an Allyfe supervisor first.</p>
         <h4>Allyfe fee</h4>
-        <p>Allyfe keeps a company fee from the artisan’s service fee when a job is done: <b>5% on Basic and Pro jobs, 7% on Premium jobs</b>. Clients pay the quoted price and nothing extra. Materials carry no fee.</p>
+        <p>Allyfe keeps a company fee from the artisan’s service fee when a job is done: <b>5% on Basic and Pro jobs, 10% on Premium jobs</b>. Clients pay the quoted price and nothing extra. Materials carry no fee.</p>
         <h4>5. Not as described</h4>
         <p>If the artisan arrives and the job is not what you described, they may mark it “Not as described”. You then forfeit 50% of the service fee for their visit; the other 50% is refunded. Materials already delivered stay with you.</p>
         <h4>6. If the artisan doesn’t show up</h4>

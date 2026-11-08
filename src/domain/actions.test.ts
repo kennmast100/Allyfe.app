@@ -291,7 +291,7 @@ describe('profiles', () => {
 });
 
 describe('Allyfe fee', () => {
-  it('takes 7% of the service fee on Premium jobs', () => {
+  it('takes 10% of the service fee on Premium jobs', () => {
     let { s, job } = posted({ tier: 'Premium' });
     s = as(s, 'a-ibrahim', { type: 'submitBid', jobId: job.id, bid: bid({ lines: [], serviceFee: 30000 }) });
     s = as(s, 'c-kenneth', { type: 'acceptBid', jobId: job.id, bidId: s.jobs[0].bids[0].id });
@@ -300,8 +300,8 @@ describe('Allyfe fee', () => {
     s = run(s, { type: 'supervisorApprove', jobId: job.id });
     const before = s.wallets['a-ibrahim'];
     s = as(s, 'c-kenneth', { type: 'completeJob', jobId: job.id });
-    expect(s.wallets['a-ibrahim']).toBe(before + 27900);
-    expect(s.wallets['allyfe']).toBe(2100);
+    expect(s.wallets['a-ibrahim']).toBe(before + 27000);
+    expect(s.wallets['allyfe']).toBe(3000);
     expect(s.wallets['c-kenneth']).toBe(400000 - 30000); // the client pays the quoted fee, nothing extra
   });
 });

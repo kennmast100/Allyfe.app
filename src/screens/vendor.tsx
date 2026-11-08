@@ -138,7 +138,7 @@ export function VendorHome() {
         ))}
       </div>
       <Notice tone="info" icon="i">
-        The first verified vendor to accept a request supplies it. Call the client to confirm the exact materials (brand, colour, texture) and the delivery. You're paid when the client confirms they received everything. If they refuse a delivery, you must collect it.
+        The first verified vendor to accept a request supplies it. Once you accept, you get the client's phone number and address: call to confirm the exact materials (brand, colour, texture) and the delivery. You're paid when the client confirms they received everything. If they refuse a delivery, you must collect it.
       </Notice>
       {toCollect.length > 0 && (
         <>
@@ -232,8 +232,14 @@ export function OrderDetail({ jobId }: { jobId: string }) {
           <dd>{dayLabel(j.scheduledDay!)} (the artisan's start day)</dd>
         </dl>
       </div>
-      {!taken && <ContactClient name={client.name} phone={client.phone} />}
-      {!taken && <p className="small mt6">Call to confirm the exact materials (brand, colour, texture) and the delivery time.</p>}
+      {mine ? (
+        <>
+          <ContactClient name={client.name} phone={client.phone} />
+          <p className="small mt6">Call to confirm the exact materials (brand, colour, texture) and the delivery time.</p>
+        </>
+      ) : (
+        !taken && <p className="small mt10 lock-note">🔒 The client's phone number and full address appear once you accept this order.</p>
+      )}
       {o.rejections.length > 0 && (
         <Notice>
           An earlier delivery was refused: {o.rejections.map((r) => r.reason).join('; ')}. Make sure every item matches the list.

@@ -69,9 +69,9 @@ On the sign-in screen, pick a demo account, or type its phone number and any 6-d
 
 **People:** clients, artisans (individuals or construction teams, with apprentices; a former apprentice's profile shows the master's work as collaborated projects), and market vendors. Jobs only go to artisans and vendors in the client's city.
 
-**Allyfe fee:** when the client taps Job done, Allyfe keeps 5% of the artisan's service fee on Basic and Pro jobs and 7% on Premium (`PLATFORM_FEE_RATES` in `src/domain/rules.ts`). Materials carry no fee, and clients pay the quoted price. The job type is shown next to the service fee everywhere, and fees collect in the `allyfe` wallet.
+**Allyfe fee:** when the client taps Job done, Allyfe keeps 5% of the artisan's service fee on Basic and Pro jobs and 10% on Premium (`PLATFORM_FEE_RATES` in `src/domain/rules.ts`). Materials carry no fee, and clients pay the quoted price. The job type is shown next to the service fee everywhere, and fees collect in the `allyfe` wallet.
 
-**Vendors:** vendors see the client's phone number (with Call and WhatsApp buttons) to confirm logistics and the exact materials. They can post items they have in stock to the feed. If the client is unhappy with a delivery, they choose a reason (wrong item, substandard, damaged, short, wrong size/colour/texture, used, or other). The vendor is not paid and is told to collect the goods under their vendor contract, and the order reopens for vendors.
+**Vendors:** once a vendor accepts an order, they see the client's phone number and address (with Call and WhatsApp buttons) to confirm logistics and the exact materials. Other vendors never see them. They can post items they have in stock to the feed. If the client is unhappy with a delivery, they choose a reason (wrong item, substandard, damaged, short, wrong size/colour/texture, used, or other). The vendor is not paid and is told to collect the goods under their vendor contract, and the order reopens for vendors.
 
 **Also:** in-app wallets with top-up and withdrawal, the community feed (photo or video posts, vendor stock listings, likes, comments), alerts, an offline state, and Terms & Conditions (including the refund, fee and refusal rules).
 

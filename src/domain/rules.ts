@@ -8,7 +8,7 @@ export const TIERS: Tier[] = ['Basic', 'Pro', 'Premium'];
  * Allyfe's company fee, taken from the artisan's service fee when a job is done.
  * Materials carry no fee. Change the rates here and every screen and payout follows.
  */
-export const PLATFORM_FEE_RATES: Record<Tier, number> = { Basic: 0.05, Pro: 0.05, Premium: 0.07 };
+export const PLATFORM_FEE_RATES: Record<Tier, number> = { Basic: 0.05, Pro: 0.05, Premium: 0.1 };
 export const platformFee = (serviceFee: number, tier: Tier) => Math.round(serviceFee * PLATFORM_FEE_RATES[tier]);
 export const feePercent = (tier: Tier) => `${Math.round(PLATFORM_FEE_RATES[tier] * 100)}%`;
 

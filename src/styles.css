@@ -445,3 +445,4 @@ details summary { cursor: pointer; }
 .stock-badge { position: absolute; left: 10px; top: 10px; background: var(--teal); color: #fff; font-size: 11px; font-weight: 800; border-radius: 8px; padding: 3px 8px; }
 .stock-row { display: flex; justify-content: space-between; align-items: baseline; gap: 10px; background: #e0f7f4; border-radius: 12px; padding: 8px 12px; margin-bottom: 8px; font-size: 13px; }
 .stock-row span { font-weight: 800; white-space: nowrap; }
+.lock-note { background: var(--grey-soft); border-radius: 12px; padding: 10px 12px; }
