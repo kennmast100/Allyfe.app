@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Avatar, Icon, Picture, ToolIcon } from '../components/art';
+import { Avatar, Icon, Picture } from '../components/art';
 import { BackBar, Calendar, Empty, Journey, MediaInput, Notice, PersonRow, SimButton, StatusTag, TopBar, dayLabel, timeAgo } from '../components/ui';
 import { VERIFICATION_ITEMS } from '../domain/actions';
 import {
@@ -8,6 +8,8 @@ import {
   artisanQualifies,
   billableMaterials,
   completionSplit,
+  feePercent,
+  platformFee,
   customKey,
   formatNaira,
   isOnOrAfterDay,
@@ -15,7 +17,7 @@ import {
   misdescribedSplit,
   rankArtisans,
 } from '../domain/rules';
-import type { Artisan, Company, Job, QuoteLine } from '../domain/types';
+import type { Artisan, Job, QuoteLine } from '../domain/types';
 import { useApp } from '../store/store';
 import { History, JobDetails, JobHeader, MaterialsStatus, QuoteTable, SplitBox } from './client';
 
@@ -129,18 +131,6 @@ export function ArtisanHome() {
           <small>
             ★ {me.rating.toFixed(2)} from {me.ratingCount} ratings · #{rank} {me.trade.toLowerCase()} in {me.city}. Manage your team and apprentices.
           </small>
-        </span>
-        <span className="go">
-          <Icon name="chev" size={14} />
-        </span>
-      </button>
-      <button className="rep teal mt10" onClick={() => go({ name: 'store' })}>
-        <span className="ic">
-          <Icon name="tools" size={20} />
-        </span>
-        <span>
-          <b>Tool Store</b>
-          <small>Rent tools from verified companies for your next job.</small>
         </span>
         <span className="go">
           <Icon name="chev" size={14} />
@@ -341,7 +331,6 @@ export function ArtisanJob({ job: j }: { job: Job }) {
 
   const dayCame = j.scheduledDay ? isOnOrAfterDay(j.scheduledDay, Date.now()) : false;
   const half = misdescribedSplit(j.serviceFee ?? 0).artisan;
-  const jobRentals = state.rentals.filter((r) => r.jobId === j.id);
   let focus: React.ReactNode = null;
   switch (j.status) {
     case 'awarded':
@@ -391,15 +380,7 @@ export function ArtisanJob({ job: j }: { job: Job }) {
       focus = (
         <div className="focus">
           <h4>Work in progress</h4>
-          <p>Need equipment? Rent it from a verified tool company. The rental comes out of your service fee when {cf} confirms.</p>
-          {jobRentals.map((r) => (
-            <div className="small" key={r.id}>
-              • {state.tools.find((t) => t.id === r.toolId)?.name} from {state.users[r.companyId].name}: <b className="ink">{r.status}</b>
-            </div>
-          ))}
-          <button className="btn secondary" onClick={() => go({ name: 'store', jobId: j.id })}>
-            Rent a tool for this job
-          </button>
+          <p>Tap Work finished when everything is done. {cf} then checks the work{j.tier === 'Premium' ? ' after the Allyfe supervisor' : ''} and taps Job done to pay you.</p>
           <button className="btn primary" onClick={() => dispatch({ type: 'finishWork', jobId: j.id }, `${cf} has been asked to check the work.`)}>
             Work finished
           </button>
@@ -412,7 +393,7 @@ export function ArtisanJob({ job: j }: { job: Job }) {
         <div className="focus warn">
           <h4>Waiting for {j.status === 'supervisor_check' ? 'the supervisor' : `${cf} to tap Job done`}</h4>
           <p>Your wallet is credited when {cf} confirms:</p>
-          <SplitBox split={completionSplit(j, state.rentals)} job={j} />
+          <SplitBox split={completionSplit(j)} job={j} />
           {j.status === 'supervisor_check' && <SimButton onClick={() => dispatch({ type: 'supervisorApprove', jobId: j.id })}>supervisor approves the work</SimButton>}
         </div>
       );
@@ -456,7 +437,7 @@ export function ArtisanJob({ job: j }: { job: Job }) {
         <>
           <h3>Your accepted quotation</h3>
           <div className="card">
-            <QuoteTable lines={myBid.lines} serviceFee={myBid.serviceFee} />
+            <QuoteTable lines={myBid.lines} serviceFee={myBid.serviceFee} tier={j.tier} />
           </div>
         </>
       )}
@@ -589,8 +570,19 @@ export function QuoteForm({ jobId }: { jobId: string }) {
         </Notice>
       )}
 
-      <h3>Service fee</h3>
+      <h3>
+        Service fee
+        <span className={'tag xs tier-' + j.tier.toLowerCase()}>
+          {j.tier} job · {feePercent(j.tier)} Allyfe fee
+        </span>
+      </h3>
       <input type="text" inputMode="numeric" aria-label="Service fee" placeholder="₦ your labour for the whole job" value={fee} onChange={(e) => setFee(e.target.value)} />
+      {serviceFee > 0 && (
+        <p className="small mt6">
+          This is a <b className="ink">{j.tier}</b> job, so Allyfe keeps {feePercent(j.tier)} of your service fee ({formatNaira(platformFee(serviceFee, j.tier))}). You receive{' '}
+          <b className="ink">{formatNaira(serviceFee - platformFee(serviceFee, j.tier))}</b> when the client taps Job done. Materials carry no fee.
+        </p>
+      )}
 
       <label className="f">Which of the client's days?</label>
       <Calendar selected={day} onChange={setDay} max={1} allowed={j.preferredDays} />
@@ -606,12 +598,15 @@ export function QuoteForm({ jobId }: { jobId: string }) {
           <b>{formatNaira(materials)}</b>
         </div>
         <div>
-          <span>Service fee</span>
+          <span>Service fee ({j.tier} job)</span>
           <b>{formatNaira(serviceFee)}</b>
         </div>
         <div className="tot">
-          <span>Your bid</span>
+          <span>Your bid (what the client pays)</span>
           <span>{formatNaira(materials + serviceFee)}</span>
+        </div>
+        <div className="small">
+          You take home {formatNaira(serviceFee - platformFee(serviceFee, j.tier))} after the {feePercent(j.tier)} Allyfe fee.
         </div>
       </div>
       <button
@@ -650,7 +645,7 @@ export function Applied({ jobId }: { jobId: string }) {
       <div className="card">
         <b>{j.title}</b>
         <div className="small mb8">Start day: {dayLabel(b.day)}</div>
-        <QuoteTable lines={b.lines} serviceFee={b.serviceFee} />
+        <QuoteTable lines={b.lines} serviceFee={b.serviceFee} tier={j.tier} />
         {b.message && <p className="t13 m6">“{b.message}”</p>}
       </div>
       {accepted ? (
@@ -772,7 +767,7 @@ export function ProfileEdit() {
   );
 }
 
-/* ---------------- Verification (artisan, tool company, vendor) ---------------- */
+/* ---------------- Verification (artisan, vendor) ---------------- */
 export function Verify() {
   const { user, dispatch } = useApp();
   if (!user || user.role === 'client') return null;
@@ -789,7 +784,7 @@ export function Verify() {
           ? 'Only verified artisans can bid. Upload clear photos; blurry ones are rejected. Allyfe checks them within 24 hours.'
           : user.role === 'vendor'
             ? 'Only verified vendors receive materials requests. Upload clear pictures of each document.'
-            : 'Artisans only rent from verified companies. Upload clear pictures of each document.'}
+            : ''}
       </p>
       <div className="uploads">
         {items.map((it) => {
@@ -834,114 +829,6 @@ export function Verify() {
           </button>
         </>
       )}
-    </>
-  );
-}
-
-/* ---------------- Tool store ---------------- */
-export function Store({ jobId }: { jobId?: string }) {
-  const { state, user, go } = useApp();
-  const mine = state.rentals.filter((r) => r.artisanId === user!.id);
-  const tools = state.tools.filter((t) => (state.users[t.companyId] as Company).verification.status === 'verified');
-  const job = jobId ? state.jobs.find((j) => j.id === jobId) : undefined;
-  return (
-    <>
-      <BackBar />
-      <h2>Tool Store</h2>
-      <p className="sub">Tools from verified companies.{job && ` Rentals come out of your fee for “${job.title}”.`}</p>
-      {mine.length > 0 && (
-        <>
-          <h3>Your rentals</h3>
-          <div className="list">
-            {mine.map((r) => {
-              const t = state.tools.find((x) => x.id === r.toolId)!;
-              return (
-                <div className="card tool" key={r.id}>
-                  <ToolIcon kind={t.kind} />
-                  <div>
-                    <b>{t.name}</b>
-                    <div className="small">
-                      {state.users[r.companyId].name} · {r.days} day{r.days > 1 ? 's' : ''} · {formatNaira(r.fee)}
-                      {r.jobId ? ' · from job fee' : ''}
-                    </div>
-                    <span className={'tag mt6 ' + (r.status === 'declined' ? 'bad' : r.status === 'requested' ? 'warn' : 'good')}>
-                      {r.status === 'approved' ? 'Approved · ready for pickup' : r.status === 'paid' ? 'Paid' : r.status === 'requested' ? 'Waiting for company' : 'Declined'}
-                    </span>
-                  </div>
-                </div>
-              );
-            })}
-          </div>
-          <h3>Available</h3>
-        </>
-      )}
-      <div className="list">
-        {tools.map((t) => (
-          <div className="card tool" key={t.id}>
-            <ToolIcon kind={t.kind} />
-            <div>
-              <div className="between">
-                <b>{t.name}</b>
-                <b className="t13 nowrap">{formatNaira(t.pricePerDay)}/day</b>
-              </div>
-              <div className="small">
-                {state.users[t.companyId].name} <span className="vtick">✓</span>
-              </div>
-              <button className="btn secondary sm mt8" onClick={() => go({ name: 'rent', toolId: t.id, jobId })}>
-                Rent
-              </button>
-            </div>
-          </div>
-        ))}
-      </div>
-    </>
-  );
-}
-
-export function Rent({ toolId, jobId }: { toolId: string; jobId?: string }) {
-  const { state, user, dispatch, back } = useApp();
-  const [days, setDays] = useState(2);
-  const t = state.tools.find((x) => x.id === toolId);
-  if (!t) return <BackBar />;
-  const co = state.users[t.companyId];
-  const job = jobId ? state.jobs.find((j) => j.id === jobId) : undefined;
-  const fee = t.pricePerDay * days;
-  return (
-    <>
-      <BackBar label="Tool Store" />
-      <div className="card tool">
-        <ToolIcon kind={t.kind} />
-        <div>
-          <b>{t.name}</b>
-          <div className="small">
-            {co.name} <span className="vtick">✓</span> · {formatNaira(t.pricePerDay)} per day
-          </div>
-        </div>
-      </div>
-      <label className="f">How many days?</label>
-      <div className="seg">
-        {[1, 2, 3].map((d) => (
-          <button key={d} className={days === d ? 'on' : ''} onClick={() => setDays(d)}>
-            {d} day{d > 1 ? 's' : ''}
-          </button>
-        ))}
-      </div>
-      <div className="card money mt14">
-        <div>
-          <span>Rental</span>
-          <b>{formatNaira(fee)}</b>
-        </div>
-        <div>
-          <span>Paid from</span>
-          <span>{job ? `Your fee for job ${job.ref}` : `Your wallet (${formatNaira(state.wallets[user!.id] ?? 0)})`}</span>
-        </div>
-      </div>
-      <Notice tone="info" icon="i">
-        Pick up from {co.name} with your Allyfe ID. Return it on time and in good condition, or the company can raise a claim.
-      </Notice>
-      <button className="btn primary" onClick={() => dispatch({ type: 'requestRental', toolId: t.id, days, jobId }, `Request sent to ${co.name}.`) && back()}>
-        Request rental
-      </button>
     </>
   );
 }

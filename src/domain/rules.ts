@@ -1,14 +1,16 @@
-import type { Artisan, Category, City, Job, QuoteLine, Rental, Tier } from './types';
+import type { Artisan, Category, City, Job, QuoteLine, Tier } from './types';
 
 export const CATEGORIES: Category[] = ['Home Renovation', 'Interior Design', 'Plumbing', 'Electrical', 'Painting'];
 export const CITIES: City[] = ['Port Harcourt', 'Lagos', 'Abuja', 'Aba'];
 export const TIERS: Tier[] = ['Basic', 'Pro', 'Premium'];
 
 /**
- * Allyfe's cut of each artisan service fee. Not agreed yet, so it is 0 for now.
- * Change it here and every payout, screen and test follows.
+ * Allyfe's company fee, taken from the artisan's service fee when a job is done.
+ * Materials carry no fee. Change the rates here and every screen and payout follows.
  */
-export const PLATFORM_FEE_RATE = 0;
+export const PLATFORM_FEE_RATES: Record<Tier, number> = { Basic: 0.05, Pro: 0.05, Premium: 0.07 };
+export const platformFee = (serviceFee: number, tier: Tier) => Math.round(serviceFee * PLATFORM_FEE_RATES[tier]);
+export const feePercent = (tier: Tier) => `${Math.round(PLATFORM_FEE_RATES[tier] * 100)}%`;
 
 /** Share of the service fee the client forfeits when an artisan finds the job misdescribed on arrival. */
 export const MISDESCRIBED_FORFEIT = 0.5;
@@ -30,6 +32,17 @@ export const TIER_FEATURES: Record<Tier, string[]> = {
   Pro: [`Only top-rated artisans (${PRO_MIN_RATING}★ and above) can bid`, 'Priority with vendors and faster response'],
   Premium: ['Everything in Pro', 'An Allyfe supervisor inspects the work before you release payment'],
 };
+
+/** Reasons a client can give for refusing a materials delivery. */
+export const MATERIAL_REJECT_REASONS = [
+  'Wrong item or brand',
+  'Poor quality or substandard',
+  'Damaged or broken',
+  'Short quantity or items missing',
+  'Wrong size, colour or texture',
+  'Used, old or expired',
+  'Other',
+] as const;
 
 export function formatNaira(n: number): string {
   return '₦' + Math.round(n).toLocaleString('en-NG');
@@ -214,16 +227,12 @@ export function rankArtisans<T extends Artisan>(list: T[]): T[] {
 
 /* ---------------- money ---------------- */
 
-export type Split = { artisan: number; companies: { companyId: string; rentalId: string; amount: number }[]; platform: number };
+export type Split = { serviceFee: number; platform: number; artisan: number; rate: string };
 
-/** How the service fee still held is split when the client confirms the work is complete. */
-export function completionSplit(job: Pick<Job, 'escrow' | 'id'>, rentals: Rental[]): Split {
-  const jobRentals = rentals.filter((r) => r.jobId === job.id && r.status === 'approved');
-  const companies = jobRentals.map((r) => ({ companyId: r.companyId, rentalId: r.id, amount: r.fee }));
-  const toolTotal = companies.reduce((s, c) => s + c.amount, 0);
-  if (toolTotal > job.escrow) throw new Error('Tool rentals cost more than the service fee');
-  const platform = Math.round((job.escrow - toolTotal) * PLATFORM_FEE_RATE);
-  return { artisan: job.escrow - toolTotal - platform, companies, platform };
+/** How the service fee still held is paid out when the client taps Job done. */
+export function completionSplit(job: Pick<Job, 'escrow' | 'tier'>): Split {
+  const platform = platformFee(job.escrow, job.tier);
+  return { serviceFee: job.escrow, platform, artisan: job.escrow - platform, rate: feePercent(job.tier) };
 }
 
 /** The 50% rule on the service fee: what goes to the artisan for the visit and what returns to the client. */
@@ -232,9 +241,8 @@ export function misdescribedSplit(serviceFee: number): { artisan: number; client
   return { artisan, clientRefund: serviceFee - artisan };
 }
 
-export function jobToolCost(jobId: string, rentals: Rental[]): number {
-  return rentals.filter((r) => r.jobId === jobId && r.status === 'approved').reduce((s, r) => s + r.fee, 0);
-}
+/** The job address with its city, without repeating the city when the address already has it. */
+export const fullAddress = (j: Pick<Job, 'addr' | 'city'>) => (j.addr.toLowerCase().includes(j.city.toLowerCase()) ? j.addr : `${j.addr}, ${j.city}`);
 
 /* ---------------- labels ---------------- */
 

@@ -115,7 +115,6 @@ type NavItem = { label: string; icon: IconName | 'fab'; route: Route; badge?: nu
 export function BottomNav() {
   const { user, route, go, state } = useApp();
   if (!user) return null;
-  const pending = state.rentals.filter((r) => r.companyId === user.id && r.status === 'requested').length;
   const items: NavItem[] =
     user.role === 'client'
       ? [
@@ -133,17 +132,10 @@ export function BottomNav() {
             { label: 'Feed', icon: 'feed', route: { name: 'feed' } },
             { label: 'Wallet', icon: 'wallet', route: { name: 'wallet' } },
           ]
-        : user.role === 'vendor'
-          ? [
-              { label: 'Home', icon: 'home', route: { name: 'home' } },
-              { label: 'Requests', icon: 'requests', route: { name: 'orders' }, badge: state.jobs.filter((j) => j.city === user.city && j.status === 'awarded' && j.materialsOrder?.status === 'open').length },
-              { label: 'Feed', icon: 'feed', route: { name: 'feed' } },
-              { label: 'Wallet', icon: 'wallet', route: { name: 'wallet' } },
-            ]
-          : [
+        : [
             { label: 'Home', icon: 'home', route: { name: 'home' } },
-            { label: 'Requests', icon: 'requests', route: { name: 'requests' }, badge: pending },
-            { label: 'Add Tool', icon: 'fab', route: { name: 'tools' } },
+            { label: 'Requests', icon: 'requests', route: { name: 'orders' }, badge: state.jobs.filter((j) => j.city === user.city && j.status === 'awarded' && j.materialsOrder?.status === 'open').length },
+            { label: 'Post Stock', icon: 'fab', route: { name: 'composer' } },
             { label: 'Feed', icon: 'feed', route: { name: 'feed' } },
             { label: 'Wallet', icon: 'wallet', route: { name: 'wallet' } },
           ];

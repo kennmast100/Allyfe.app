@@ -1,7 +1,7 @@
-import type { AppState, Artisan, Client, Company, Job, Post, Tool, User, Vendor } from './types';
+import type { AppState, Artisan, Client, Job, Post, User, Vendor } from './types';
 import { dayKey, earliestWorkDay } from './rules';
 
-export const STATE_VERSION = 2;
+export const STATE_VERSION = 3;
 
 const H = 3600_000;
 const D = 24 * H;
@@ -43,26 +43,13 @@ export function seedState(now = Date.now()): AppState {
     artisan({ id: 'a-david', name: 'David Johnson', phone: '0803 000 1717', trade: 'Plumber', categories: ['Plumbing'], rating: 4.5, ratingCount: 30, jobsDone: 33, area: 'Rumuibekwe, Port Harcourt', years: 5, bio: 'Bathroom and kitchen plumbing, water heaters.', avatar: { bg: '#DCFCE7', skin: '#5A3420', hair: 'short', shirt: '#0F766E' }, work: ['tiles'], bank: 'Kuda •••• 1717' }),
     artisan({ id: 'a-femi', name: 'Femi Adeyemi', phone: '0803 000 1313', city: 'Lagos', trade: 'Plumber', categories: ['Plumbing'], rating: 4.8, ratingCount: 70, jobsDone: 75, area: 'Yaba, Lagos', years: 8, bio: 'Plumbing for homes and offices in Lagos mainland.', avatar: { bg: '#E0F2FE', skin: '#6B3F22', hair: 'short', shirt: '#0E1F3B' }, work: ['tiles'], bank: 'GTBank •••• 1313' }),
   ];
-  const companies: Company[] = [
-    { id: 'co-buildright', role: 'company', city: 'Port Harcourt', name: 'BuildRight Tools', phone: '0803 000 9999', area: 'Trans-Amadi, Port Harcourt', bank: 'Zenith •••• 2002', avatar: { bg: '#FEF3C7', skin: '#5A3420', hair: 'short', shirt: '#B45309' }, verification: { status: 'verified', files: { cac: 'room', shop: 'room', owner: 'room', w1: 'room' } } },
-    { id: 'co-toolhub', role: 'company', city: 'Port Harcourt', name: 'ToolHub PH', phone: '0803 000 1010', area: 'Rumuola, Port Harcourt', bank: 'GTBank •••• 6789', avatar: { bg: '#0E1F3B', skin: '#7A4A2A', hair: 'short', shirt: '#F59E0B' }, verification: { status: 'none', files: {} } },
-  ];
   const vendors: Vendor[] = [
     { id: 'v-mile3', role: 'vendor', city: 'Port Harcourt', market: 'Mile 3 Market', name: 'Mile 3 Building Supplies', phone: '0803 000 1414', area: 'Mile 3, Port Harcourt', bank: 'UBA •••• 1414', avatar: { bg: '#DCFCE7', skin: '#6B3F22', hair: 'wrap', shirt: '#15803D' }, verification: { status: 'verified', files: { cac: 'room', shop: 'room', owner: 'room', w1: 'room' } } },
     { id: 'v-oilmill', role: 'vendor', city: 'Port Harcourt', market: 'Oil Mill Market', name: 'Oil Mill Electricals & Plumbing', phone: '0803 000 1515', area: 'Oil Mill, Port Harcourt', bank: 'Zenith •••• 1515', avatar: { bg: '#E0F2FE', skin: '#5A3420', hair: 'short', shirt: '#0369A1' }, verification: { status: 'verified', files: { cac: 'room', shop: 'room', owner: 'room', w1: 'room' } } },
     { id: 'v-tradefair', role: 'vendor', city: 'Lagos', market: 'Trade Fair Complex', name: 'Trade Fair Supplies', phone: '0803 000 1616', area: 'Ojo, Lagos', bank: 'GTBank •••• 1616', avatar: { bg: '#EDE9FE', skin: '#7A4A2A', hair: 'short', shirt: '#6D28D9' }, verification: { status: 'verified', files: { cac: 'room', shop: 'room', owner: 'room', w1: 'room' } } },
   ];
   const users: Record<string, User> = {};
-  [...clients, ...artisans, ...companies, ...vendors].forEach((u) => (users[u.id] = u));
-
-  const tools: Tool[] = [
-    { id: 't1', companyId: 'co-buildright', name: 'Cordless drill kit', kind: 'drill', pricePerDay: 8000 },
-    { id: 't2', companyId: 'co-buildright', name: 'Tile cutter (60 cm)', kind: 'cutter', pricePerDay: 6500 },
-    { id: 't6', companyId: 'co-buildright', name: 'Concrete mixer', kind: 'mixer', pricePerDay: 18000 },
-    { id: 't3', companyId: 'co-toolhub', name: 'Mobile scaffold set', kind: 'scaffold', pricePerDay: 15000 },
-    { id: 't4', companyId: 'co-toolhub', name: 'Airless paint sprayer', kind: 'sprayer', pricePerDay: 12000 },
-    { id: 't5', companyId: 'co-toolhub', name: '5 kVA generator', kind: 'generator', pricePerDay: 10000 },
-  ];
+  [...clients, ...artisans, ...vendors].forEach((u) => (users[u.id] = u));
 
   const openJob = (id: string, ref: string, title: string, desc: string, category: Job['category'], tier: Job['tier'], ago: number, media: string[]): Job => {
     const posted = now - ago;
@@ -96,7 +83,9 @@ export function seedState(now = Date.now()): AppState {
   const posts: Post[] = [
     { id: 'p1', authorId: 'a-blessing', image: 'room', text: 'Living room repaint finished today in GRA. Client chose a soft green with a white trim.', likes: ['c-ada', 'a-tunde'], comments: [{ id: 'cm1', authorId: 'c-kenneth', text: 'Clean lines. Saving this for my sitting room.', at: now - 1.5 * H }, { id: 'cm2', authorId: 'a-tunde', text: 'Nice finish, sis.', at: now - H }], at: now - 2 * H },
     { id: 'p2', authorId: 'a-chidi', image: 'solar', text: '4 panels and a 3.5 kVA inverter installed in Trans-Amadi. No more fuel queues for this family.', likes: ['a-grace', 'c-ada', 'a-emeka'], comments: [{ id: 'cm3', authorId: 'a-grace', text: 'Good job on the cable runs.', at: now - 4 * H }], at: now - 5 * H },
-    { id: 'p3', authorId: 'a-tunde', image: 'tiles', text: 'Bathroom retiled in 3 days, using a tile cutter rented from BuildRight Tools on Allyfe.', likes: ['a-emeka'], comments: [], at: now - D },
+    { id: 'p3', authorId: 'a-tunde', image: 'tiles', text: 'Bathroom retiled in 3 days. Client supplied the tiles through a Mile 3 vendor on Allyfe.', likes: ['a-emeka'], comments: [], at: now - D },
+    { id: 'p5', authorId: 'v-mile3', image: 'tiles', text: 'Fresh stock of 60×60 floor tiles, matte grey and cream. Delivery anywhere in Port Harcourt.', likes: ['a-tunde', 'c-ada'], comments: [{ id: 'cm4', authorId: 'a-tunde', text: 'Do you have the glossy white?', at: now - 2 * H }], at: now - 3 * H, stock: { name: 'Floor tiles 60×60', price: 9500, unit: 'carton' } },
+    { id: 'p6', authorId: 'v-oilmill', image: 'room', text: 'Kitchen sink mixer taps back in stock. Chrome finish, 1-year warranty.', likes: [], comments: [], at: now - 6 * H, stock: { name: 'Kitchen sink mixer tap', price: 18000, unit: 'piece' } },
     { id: 'p4', authorId: 'a-emeka', image: 'wardrobe', text: 'Sliding wardrobe for a family in Rumuola. Chinedu handled the doors and rails.', likes: ['c-kenneth'], comments: [], at: now - 200 * D },
   ];
 
@@ -105,16 +94,13 @@ export function seedState(now = Date.now()): AppState {
     sessionUserId: null,
     users,
     jobs,
-    tools,
-    rentals: [],
     posts,
-    wallets: { 'c-kenneth': 400000, 'c-ada': 300000, 'a-emeka': 86500, 'a-chidi': 42000, 'a-ibrahim': 61000, 'a-blessing': 23000, 'a-tunde': 9000, 'a-grace': 0, 'a-chinedu': 12000, 'a-david': 18000, 'a-femi': 30000, 'co-buildright': 54000, 'co-toolhub': 0, 'v-mile3': 0, 'v-oilmill': 0, 'v-tradefair': 0 },
+    wallets: { 'c-kenneth': 400000, 'c-ada': 300000, 'a-emeka': 86500, 'a-chidi': 42000, 'a-ibrahim': 61000, 'a-blessing': 23000, 'a-tunde': 9000, 'a-grace': 0, 'a-chinedu': 12000, 'a-david': 18000, 'a-femi': 30000, 'v-mile3': 0, 'v-oilmill': 0, 'v-tradefair': 0 },
     txns: {
       'c-kenneth': [{ id: 'x1', label: 'Top-up from GTBank', amount: 400000, kind: 'in', at: now - 5 * D }],
       'a-emeka': [
         { id: 'x2', label: 'Payment · Wardrobe for Mrs Ada', amount: 180000, kind: 'in', at: now - 10 * D },
         { id: 'x3', label: 'Withdrawal to Access Bank', amount: 120000, kind: 'out', at: now - 9 * D },
-        { id: 'x4', label: 'Tile cutter rental · BuildRight', amount: 13000, kind: 'out', at: now - 16 * D },
       ],
     },
     alerts: {},
@@ -135,6 +121,4 @@ export const DEMO_ACCOUNTS: { id: string; note: string }[] = [
   { id: 'a-grace', note: 'Artisan · verification not finished' },
   { id: 'v-mile3', note: 'Market vendor · Mile 3, Port Harcourt' },
   { id: 'v-oilmill', note: 'Market vendor · Oil Mill, Port Harcourt' },
-  { id: 'co-buildright', note: 'Tool company · verified' },
-  { id: 'co-toolhub', note: 'Tool company · not yet verified' },
 ];

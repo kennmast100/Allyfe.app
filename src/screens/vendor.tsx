@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { Avatar, Icon } from '../components/art';
 import { BackBar, Empty, Notice, TopBar, dayLabel, timeAgo } from '../components/ui';
-import { formatNaira } from '../domain/rules';
+import { formatNaira, fullAddress } from '../domain/rules';
 import type { Job, Vendor } from '../domain/types';
 import { useApp } from '../store/store';
 import { QuoteTable } from './client';
@@ -12,7 +12,9 @@ function useOrders() {
   const inCity = state.jobs.filter((j) => j.city === v.city && j.materialsOrder);
   const open = inCity.filter((j) => j.status === 'awarded' && j.materialsOrder!.status === 'open');
   const mine = inCity.filter((j) => j.materialsOrder!.vendorId === v.id);
-  return { v, open, mine };
+  /** Deliveries the client refused that this vendor still has to collect. */
+  const toCollect = inCity.filter((j) => j.materialsOrder!.rejections.some((r) => r.vendorId === v.id && !r.pickedUpAt));
+  return { v, open, mine, toCollect };
 }
 
 const ORDER_LABEL = { open: 'New request', accepted: 'Buy and send', dispatched: 'Waiting for client to confirm', delivered: 'Delivered · paid', cancelled: 'Cancelled by client' } as const;
@@ -38,9 +40,57 @@ function OrderCard({ job: j }: { job: Job }) {
   );
 }
 
+/** Nigerian numbers in international form for tel: and WhatsApp links. */
+const intl = (phone: string) => {
+  const d = phone.replace(/\D/g, '');
+  return d.startsWith('0') ? '234' + d.slice(1) : d;
+};
+export function ContactClient({ name, phone }: { name: string; phone: string }) {
+  return (
+    <div className="contact">
+      <div>
+        <div className="small">Client</div>
+        <b className="t14">{name}</b>
+        <div className="t13">{phone}</div>
+      </div>
+      <a className="btn secondary sm" href={`tel:+${intl(phone)}`}>
+        Call
+      </a>
+      <a className="btn secondary sm" href={`https://wa.me/${intl(phone)}`} target="_blank" rel="noreferrer">
+        WhatsApp
+      </a>
+    </div>
+  );
+}
+
+function CollectCard({ job: j }: { job: Job }) {
+  const { state, user, dispatch } = useApp();
+  const r = j.materialsOrder!.rejections.find((x) => x.vendorId === user!.id && !x.pickedUpAt)!;
+  const client = state.users[j.clientId];
+  return (
+    <div className="card collect">
+      <div className="between">
+        <b className="t14">Collect refused materials</b>
+        <span className="tag bad xs">Not accepted</span>
+      </div>
+      <p className="t13 m6">
+        {client.name} refused your delivery for “{j.title}”: <b>{r.reason}</b>
+        {r.note ? ` (“${r.note}”)` : ''}.
+      </p>
+      <div className="small">
+        Under your Allyfe vendor contract, collect the goods from <b className="ink">{fullAddress(j)}</b>. This delivery is not paid.
+      </div>
+      <ContactClient name={client.name} phone={client.phone} />
+      <button className="btn primary mt8" onClick={() => dispatch({ type: 'vendorPickedUp', jobId: j.id }, 'Marked as collected. The client has been told.')}>
+        I've collected the materials
+      </button>
+    </div>
+  );
+}
+
 export function VendorHome() {
   const { state, go } = useApp();
-  const { v, open, mine } = useOrders();
+  const { v, open, mine, toCollect } = useOrders();
   const active = mine.filter((j) => j.materialsOrder!.status === 'accepted' || j.materialsOrder!.status === 'dispatched');
   const delivered = mine.filter((j) => j.materialsOrder!.status === 'delivered');
   return (
@@ -88,8 +138,18 @@ export function VendorHome() {
         ))}
       </div>
       <Notice tone="info" icon="i">
-        The first verified vendor to accept a request supplies it. Deliver to the client's home before the artisan's start day. You're paid as soon as the client confirms they received everything.
+        The first verified vendor to accept a request supplies it. Call the client to confirm the exact materials (brand, colour, texture) and the delivery. You're paid when the client confirms they received everything. If they refuse a delivery, you must collect it.
       </Notice>
+      {toCollect.length > 0 && (
+        <>
+          <h3>To collect ({toCollect.length})</h3>
+          <div className="list">
+            {toCollect.map((j) => (
+              <CollectCard key={j.id} job={j} />
+            ))}
+          </div>
+        </>
+      )}
       <h3>New requests in {v.city}</h3>
       <div className="list">
         {open.map((j) => (
@@ -112,7 +172,7 @@ export function VendorHome() {
 }
 
 export function Orders({ tab = 'new' }: { tab?: 'new' | 'mine' }) {
-  const { open, mine } = useOrders();
+  const { open, mine, toCollect } = useOrders();
   const [t, setT] = useState(tab);
   return (
     <>
@@ -130,6 +190,13 @@ export function Orders({ tab = 'new' }: { tab?: 'new' | 'mine' }) {
           </button>
         ))}
       </div>
+      {toCollect.length > 0 && (
+        <div className="list mb12">
+          {toCollect.map((j) => (
+            <CollectCard key={j.id} job={j} />
+          ))}
+        </div>
+      )}
       <div className="list">
         {(t === 'new' ? open : mine).map((j) => (
           <OrderCard key={j.id} job={j} />
@@ -160,17 +227,18 @@ export function OrderDetail({ jobId }: { jobId: string }) {
       <div className="card mt12">
         <dl className="summary m0">
           <dt>Deliver to</dt>
-          <dd>{mine ? `${client.name} · ${j.addr}, ${j.city}` : `${client.area} (full address after you accept)`}</dd>
-          {mine && (
-            <>
-              <dt>Client phone</dt>
-              <dd>{client.phone}</dd>
-            </>
-          )}
+          <dd>{mine ? fullAddress(j) : `${client.area} (full address after you accept)`}</dd>
           <dt>Needed by</dt>
           <dd>{dayLabel(j.scheduledDay!)} (the artisan's start day)</dd>
         </dl>
       </div>
+      {!taken && <ContactClient name={client.name} phone={client.phone} />}
+      {!taken && <p className="small mt6">Call to confirm the exact materials (brand, colour, texture) and the delivery time.</p>}
+      {o.rejections.length > 0 && (
+        <Notice>
+          An earlier delivery was refused: {o.rejections.map((r) => r.reason).join('; ')}. Make sure every item matches the list.
+        </Notice>
+      )}
       <h3>Items</h3>
       <div className="card">
         <QuoteTable lines={o.lines} showTotal={false} />

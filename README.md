@@ -49,8 +49,6 @@ On the sign-in screen, pick a demo account, or type its phone number and any 6-d
 | Tunde Bakare | Construction team of 4 | Team profile |
 | Chinedu Okafor | Artisan, ex-apprentice | Collaborated projects |
 | Mile 3 / Oil Mill vendors | Market vendors | Accepting and delivering materials |
-| ToolHub PH | Tool company | Company verification, adding tools |
-| BuildRight Tools | Tool company (verified) | Approving rental requests |
 
 ## What's in it
 
@@ -68,9 +66,13 @@ On the sign-in screen, pick a demo account, or type its phone number and any 6-d
 - **No-show:** from the scheduled day the client can report a no-show. The artisan gets 1★ for that job. The client then chooses a **refund** (everything held except delivered materials) or **another artisan**. The new quotation is automatically reduced by the materials already on site, and the money still held counts toward it.
 - **Cancel before delivery:** full refund.
 
-**People:** clients, artisans (individuals or construction teams, with apprentices; a former apprentice's profile shows the master's work as collaborated projects), market vendors, and tool companies that rent tools to artisans. Jobs only go to artisans and vendors in the client's city.
+**People:** clients, artisans (individuals or construction teams, with apprentices; a former apprentice's profile shows the master's work as collaborated projects), and market vendors. Jobs only go to artisans and vendors in the client's city.
 
-**Also:** in-app wallets with top-up and withdrawal, the Tool Store, the community feed (photo or video posts, likes, comments), alerts, an offline state, and Terms & Conditions (including the refund rules).
+**Allyfe fee:** when the client taps Job done, Allyfe keeps 5% of the artisan's service fee on Basic and Pro jobs and 7% on Premium (`PLATFORM_FEE_RATES` in `src/domain/rules.ts`). Materials carry no fee, and clients pay the quoted price. The job type is shown next to the service fee everywhere, and fees collect in the `allyfe` wallet.
+
+**Vendors:** vendors see the client's phone number (with Call and WhatsApp buttons) to confirm logistics and the exact materials. They can post items they have in stock to the feed. If the client is unhappy with a delivery, they choose a reason (wrong item, substandard, damaged, short, wrong size/colour/texture, used, or other). The vendor is not paid and is told to collect the goods under their vendor contract, and the order reopens for vendors.
+
+**Also:** in-app wallets with top-up and withdrawal, the community feed (photo or video posts, vendor stock listings, likes, comments), alerts, an offline state, and Terms & Conditions (including the refund, fee and refusal rules).
 
 Screens: see `screenshots/v2/` for every page of the current flow.
 
@@ -79,7 +81,7 @@ Screens: see `screenshots/v2/` for every page of the current flow.
 ```
 src/domain/     Business rules with no UI. Start here.
   types.ts        Data model
-  rules.ts        Pricing, tiers, money splits, 50% rule, ratings, ranking, PLATFORM_FEE_RATE
+  rules.ts        Material prices, tiers, Allyfe fee rates, money splits, 50% rule, ratings, ranking
   actions.ts      Every state change (post job, propose, confirm, complete, rent, …) as a pure reducer
   seed.ts         Demo data
   actions.test.ts Tests for the full job lifecycle and money movements
@@ -98,4 +100,5 @@ With the server running, all testers share one copy of the data in Postgres. No 
 3. **Payments:** hold escrow with a licensed provider such as Paystack or Flutterwave, and send withdrawals through their transfer API.
 4. **Verification:** upload photos to object storage and give admins a review queue. NIN lookup could be automated.
 5. **Admin tools:** supervisor assignment for Premium jobs, dispute review and payouts. The app currently has dashed **Simulate** buttons where these would go.
-6. **Still to agree:** final prices, Allyfe's fee (`PLATFORM_FEE_RATE`, currently 0), and how long money stays held.
+6. **Vendor contract:** the legal agreement that obliges vendors to collect refused materials.
+7. **Still to agree:** real material prices and how long money stays held.

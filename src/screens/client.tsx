@@ -7,6 +7,7 @@ import {
   ATTITUDE_OPTIONS,
   CATEGORIES,
   CLOSED_STATUSES,
+  MATERIAL_REJECT_REASONS,
   MIN_DESCRIPTION,
   TIERS,
   TIER_FEATURES,
@@ -15,6 +16,7 @@ import {
   completionSplit,
   earliestWorkDay,
   formatNaira,
+  fullAddress,
   isOnOrAfterDay,
   lineTotal,
   linesTotal,
@@ -494,6 +496,7 @@ export function PostJob({ artisanId, category }: { artisanId?: string; category?
               <li>You accept one and pay into Allyfe. Nobody is paid yet.</li>
               <li>A market vendor delivers the materials. They're paid when you tap “I've received the materials”.</li>
               <li>The artisan is paid when you tap “Job done”.</li>
+              <li>Your phone number is shared with the vendors and the artisan so they can confirm delivery and the exact materials with you.</li>
             </ol>
           </div>
           <Notice>
@@ -625,7 +628,7 @@ export function Projects() {
 }
 
 /* ---------------- Shared job parts ---------------- */
-export function QuoteTable({ lines, serviceFee, covered, showTotal = true }: { lines: QuoteLine[]; serviceFee?: number; covered?: QuoteLine[]; showTotal?: boolean }) {
+export function QuoteTable({ lines, serviceFee, covered, showTotal = true, tier }: { lines: QuoteLine[]; serviceFee?: number; covered?: QuoteLine[]; showTotal?: boolean; tier?: Tier }) {
   const mat = linesTotal(lines);
   return (
     <div className="quote">
@@ -657,7 +660,7 @@ export function QuoteTable({ lines, serviceFee, covered, showTotal = true }: { l
       </div>
       {serviceFee != null && (
         <div className="q-row sub">
-          <span>Service fee</span>
+          <span>Service fee{tier ? ` (${tier} job)` : ''}</span>
           <b>{formatNaira(serviceFee)}</b>
         </div>
       )}
@@ -704,7 +707,7 @@ export function JobDetails({ job: j, hideAddress }: { job: Job; hideAddress?: bo
           <dt>{j.scheduledDay ? 'Scheduled' : "Client's days"}</dt>
           <dd>{j.scheduledDay ? dayLabel(j.scheduledDay) : j.preferredDays.map(dayLabel).join(', ')}</dd>
           <dt>Address</dt>
-          <dd>{hideAddress ? `${j.city} · shared once your bid is accepted` : `${j.addr}, ${j.city}`}</dd>
+          <dd>{hideAddress ? `${j.city} · shared once your bid is accepted` : fullAddress(j)}</dd>
         </dl>
       </div>
     </>
@@ -740,23 +743,17 @@ export function SplitBox({ split, job }: { split: ReturnType<typeof completionSp
   return (
     <div className="card money sand">
       <div>
-        <span>{state.users[job.artisanId!].name} (service fee)</span>
+        <span>{state.users[job.artisanId!].name} receives</span>
         <b>{formatNaira(split.artisan)}</b>
       </div>
-      {split.companies.map((c) => (
-        <div key={c.rentalId}>
-          <span>{state.users[c.companyId].name} (tool rental)</span>
-          <b>{formatNaira(c.amount)}</b>
-        </div>
-      ))}
-      {split.platform > 0 && (
-        <div>
-          <span>Allyfe fee</span>
-          <b>{formatNaira(split.platform)}</b>
-        </div>
-      )}
+      <div>
+        <span>
+          Allyfe fee ({split.rate} · {job.tier} job)
+        </span>
+        <b>{formatNaira(split.platform)}</b>
+      </div>
       <div className="tot">
-        <span>Released when you tap Job done</span>
+        <span>Service fee released at Job done</span>
         <span>{formatNaira(job.escrow)}</span>
       </div>
     </div>
@@ -778,10 +775,64 @@ export function MaterialsStatus({ job: j }: { job: Job }) {
       </div>
       {v && <div className="small mt4">Supplier: {v.name}</div>}
       {o.waybill && <div className="small">Waybill: {o.waybill}</div>}
+      {o.rejections.map((r, i) => (
+        <div className="small reject-line" key={i}>
+          ✕ Refused delivery from {state.users[r.vendorId]?.name}: {r.reason}
+          {r.note ? ` (“${r.note}”)` : ''} · {r.pickedUpAt ? 'collected by vendor' : 'waiting for vendor to collect'}
+        </div>
+      ))}
       <details className="mt6">
         <summary className="small">See the {o.lines.length} item{o.lines.length === 1 ? '' : 's'}</summary>
         <QuoteTable lines={o.lines} showTotal={false} />
       </details>
+    </div>
+  );
+}
+
+/** Lets the client refuse a delivery with a reason. The vendor is told to come and collect it. */
+function RejectMaterials({ job: j }: { job: Job }) {
+  const { state, dispatch } = useApp();
+  const [open, setOpen] = useState(false);
+  const [reason, setReason] = useState('');
+  const [note, setNote] = useState('');
+  const vendor = state.users[j.materialsOrder!.vendorId!];
+  if (!open)
+    return (
+      <button className="btn concern" onClick={() => setOpen(true)}>
+        I'm not happy with the materials
+      </button>
+    );
+  return (
+    <div className="card reject-box">
+      <b className="t14">Refuse the materials</b>
+      <p className="small m0">
+        {vendor.name} will be told the delivery was not accepted and must come back to collect it. They are not paid, and the order goes back out so the right materials can be delivered.
+      </p>
+      <label className="f" htmlFor="rreason">
+        What's wrong?
+      </label>
+      <select id="rreason" value={reason} onChange={(e) => setReason(e.target.value)}>
+        <option value="">Choose a reason…</option>
+        {MATERIAL_REJECT_REASONS.map((r) => (
+          <option key={r}>{r}</option>
+        ))}
+      </select>
+      <label className="f" htmlFor="rnote">
+        Details {reason !== 'Other' && <em>(optional)</em>}
+      </label>
+      <textarea id="rnote" placeholder="e.g. The tap is plastic, not chrome. Only 2 of 3 tapes came." value={note} onChange={(e) => setNote(e.target.value)} maxLength={300} />
+      <button
+        className="btn concern mt10"
+        disabled={!reason}
+        onClick={() => {
+          if (dispatch({ type: 'rejectMaterials', jobId: j.id, reason, note }, `${vendor.name} has been told to collect the materials.`)) setOpen(false);
+        }}
+      >
+        Refuse materials and notify vendor
+      </button>
+      <button className="link small mt8" onClick={() => setOpen(false)}>
+        Cancel
+      </button>
     </div>
   );
 }
@@ -823,7 +874,13 @@ export function ClientJob({ job: j }: { job: Job }) {
     case 'awarded':
       focus = (
         <div className="focus">
-          <h4>{j.materialsOrder?.status === 'accepted' ? `${state.users[j.materialsOrder.vendorId!].name} is buying your materials` : `Finding a vendor in ${j.city}`}</h4>
+          <h4>
+            {j.materialsOrder?.status === 'accepted'
+              ? `${state.users[j.materialsOrder.vendorId!].name} is buying your materials`
+              : j.materialsOrder?.rejections.length
+                ? `You refused the last delivery. Finding a vendor again`
+                : `Finding a vendor in ${j.city}`}
+          </h4>
           <p>
             The materials list has gone to market vendors in {j.city}. They deliver to your home before {af} comes on <b>{dayLabel(j.scheduledDay!)}</b>.
           </p>
@@ -843,6 +900,7 @@ export function ClientJob({ job: j }: { job: Job }) {
           <button className="btn primary" onClick={() => confirm('Have you received and checked all the materials? The vendor will be paid.') && dispatch({ type: 'confirmMaterials', jobId: j.id }, `${af} has been told to come and start work.`)}>
             I've received the materials
           </button>
+          <RejectMaterials job={j} />
         </div>
       );
       break;
@@ -886,7 +944,7 @@ export function ClientJob({ job: j }: { job: Job }) {
         <div className="focus warn">
           <h4>{af} says the work is finished</h4>
           <p>Check the work{j.tier === 'Premium' ? ' (the supervisor has approved it)' : ''}. When you tap Job done, Allyfe pays:</p>
-          <SplitBox split={completionSplit(j, state.rentals)} job={j} />
+          <SplitBox split={completionSplit(j)} job={j} />
           <button
             className="btn primary"
             onClick={() => {
@@ -1012,7 +1070,7 @@ export function ClientJob({ job: j }: { job: Job }) {
         <>
           <h3>Accepted quotation</h3>
           <div className="card">
-            <QuoteTable lines={accepted.lines} serviceFee={accepted.serviceFee} />
+            <QuoteTable lines={accepted.lines} serviceFee={accepted.serviceFee} tier={j.tier} />
           </div>
         </>
       )}
@@ -1072,7 +1130,7 @@ export function BidReview({ jobId, bidId }: { jobId: string; bidId: string }) {
       </div>
       <h3>Quotation</h3>
       <div className="card">
-        <QuoteTable lines={c.billable} covered={c.covered} serviceFee={b.serviceFee} />
+        <QuoteTable lines={c.billable} covered={c.covered} serviceFee={b.serviceFee} tier={j.tier} />
       </div>
       <div className="card money mt10">
         <div>

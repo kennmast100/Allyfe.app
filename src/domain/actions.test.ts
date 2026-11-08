@@ -148,7 +148,9 @@ describe('the full journey', () => {
     expect(s.alerts['c-kenneth'][0].text).toMatch(/finished/);
     const before = s.wallets['a-ibrahim'];
     s = as(s, 'c-kenneth', { type: 'completeJob', jobId: job.id });
-    expect(s.wallets['a-ibrahim']).toBe(before + 20000);
+    // ₦20,000 service fee minus the 5% Allyfe fee on a Basic job.
+    expect(s.wallets['a-ibrahim']).toBe(before + 19000);
+    expect(s.wallets['allyfe']).toBe(1000);
     expect(s.jobs[0].escrow).toBe(0);
 
     s = as(s, 'c-kenneth', { type: 'rateJob', jobId: job.id, work: 5, attitude: 4, text: 'Neat' });
@@ -260,13 +262,51 @@ describe('profiles', () => {
   });
 });
 
-describe('wallet rentals and feed', () => {
-  it('holds a rental fee, then pays the company on approval or refunds on decline', () => {
+describe('Allyfe fee', () => {
+  it('takes 7% of the service fee on Premium jobs', () => {
+    let { s, job } = posted({ tier: 'Premium' });
+    s = as(s, 'a-ibrahim', { type: 'submitBid', jobId: job.id, bid: bid({ lines: [], serviceFee: 30000 }) });
+    s = as(s, 'c-kenneth', { type: 'acceptBid', jobId: job.id, bidId: s.jobs[0].bids[0].id });
+    at(new Date(2026, 10, 4, 9).getTime());
+    s = as(s, 'a-ibrahim', { type: 'startWork', jobId: job.id }, { type: 'finishWork', jobId: job.id });
+    s = run(s, { type: 'supervisorApprove', jobId: job.id });
+    const before = s.wallets['a-ibrahim'];
+    s = as(s, 'c-kenneth', { type: 'completeJob', jobId: job.id });
+    expect(s.wallets['a-ibrahim']).toBe(before + 27900);
+    expect(s.wallets['allyfe']).toBe(2100);
+    expect(s.wallets['c-kenneth']).toBe(400000 - 30000); // the client pays the quoted fee, nothing extra
+  });
+});
+
+describe('refusing materials', () => {
+  it('does not pay the vendor, tells them to collect, and reopens the order', () => {
+    let { s, job } = awarded();
+    s = as(s, 'v-oilmill', { type: 'vendorAcceptOrder', jobId: job.id }, { type: 'vendorDispatch', jobId: job.id, waybill: 'Rider Musa' });
+    expect(() => as(s, 'c-kenneth', { type: 'rejectMaterials', jobId: job.id, reason: 'Made up', note: '' })).toThrow(/reason/);
+    expect(() => as(s, 'c-kenneth', { type: 'rejectMaterials', jobId: job.id, reason: 'Other', note: '' })).toThrow(/what is wrong/);
+    s = as(s, 'c-kenneth', { type: 'rejectMaterials', jobId: job.id, reason: 'Poor quality or substandard', note: 'Tap is plastic, not chrome' });
+    expect(s.wallets['v-oilmill']).toBe(0);
+    expect(s.jobs[0].status).toBe('awarded');
+    expect(s.jobs[0].materialsOrder).toMatchObject({ status: 'open', vendorId: undefined });
+    expect(s.jobs[0].escrow).toBe(48100); // still held for the materials and fee
+    expect(s.alerts['v-oilmill'].some((a) => /did NOT accept .* collect them/.test(a.text))).toBe(true);
+    s = as(s, 'v-oilmill', { type: 'vendorPickedUp', jobId: job.id });
+    expect(s.jobs[0].materialsOrder!.rejections[0].pickedUpAt).toBeDefined();
+    expect(() => as(s, 'v-oilmill', { type: 'vendorPickedUp', jobId: job.id })).toThrow(/nothing to collect/);
+    // Another vendor supplies it properly and is paid on receipt.
+    s = as(s, 'v-mile3', { type: 'vendorAcceptOrder', jobId: job.id }, { type: 'vendorDispatch', jobId: job.id, waybill: 'GIG 4471' });
+    s = as(s, 'c-kenneth', { type: 'confirmMaterials', jobId: job.id });
+    expect(s.wallets['v-mile3']).toBe(28100);
+  });
+});
+
+describe('feed', () => {
+  it('lets vendors list materials in stock, but not artisans', () => {
     at(T0);
-    let s = as(seedState(T0), 'a-emeka', { type: 'requestRental', toolId: 't1', days: 2 });
-    expect(s.wallets['a-emeka']).toBe(86500 - 16000);
-    s = as(s, 'co-buildright', { type: 'respondRental', rentalId: s.rentals[0].id, approve: false });
-    expect(s.wallets['a-emeka']).toBe(86500);
+    let s = as(seedState(T0), 'v-mile3', { type: 'createPost', image: 'tiles', text: 'New tiles in', stock: { name: 'Floor tiles', price: 9500, unit: 'carton' } });
+    expect(s.posts[0].stock).toEqual({ name: 'Floor tiles', price: 9500, unit: 'carton' });
+    expect(() => as(s, 'a-emeka', { type: 'createPost', image: 'tiles', text: 'x', stock: { name: 'Wood', price: 1, unit: 'x' } })).toThrow(/Only vendors/);
+    expect(() => as(s, 'c-kenneth', { type: 'createPost', image: 'tiles', text: 'x' })).toThrow(/artisans and vendors/);
   });
   it('posts, likes and comments', () => {
     at(T0);

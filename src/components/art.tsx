@@ -1,4 +1,4 @@
-import type { AvatarSpec, Category, ImageRef, ToolKind } from '../domain/types';
+import type { AvatarSpec, Category, ImageRef } from '../domain/types';
 
 /** Static, app-authored SVG markup only. Never pass user input here. */
 const Svg = ({ html, className, style }: { html: string; className?: string; style?: React.CSSProperties }) => (
@@ -107,18 +107,3 @@ export function HouseArt() {
     />
   );
 }
-
-const TOOL_COLORS: Record<ToolKind, [string, string]> = {
-  drill: ['#FEF3C7', '#B45309'],
-  cutter: ['#E0F2FE', '#0369A1'],
-  scaffold: ['#EDE9FE', '#6D28D9'],
-  sprayer: ['#FFE4E0', '#C2410C'],
-  generator: ['#DCFCE7', '#15803D'],
-  mixer: ['#E8ECF3', '#0E1F3B'],
-};
-export const TOOL_KINDS = Object.keys(TOOL_COLORS) as ToolKind[];
-export const ToolIcon = ({ kind }: { kind: ToolKind }) => (
-  <span className="tool-ph" style={{ background: TOOL_COLORS[kind][0], color: TOOL_COLORS[kind][1] }}>
-    <Icon name="tools" />
-  </span>
-);

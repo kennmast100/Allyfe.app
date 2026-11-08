@@ -85,7 +85,7 @@ export function Feed() {
       <div className="head-row">
         <div>
           <h2>Community</h2>
-          <p className="sub m0">Finished work from artisans near you.</p>
+          <p className="sub m0">Finished work from artisans and materials in stock near you.</p>
         </div>
         {user?.role === 'artisan' && (
           <button className="btn orange sm" onClick={() => go({ name: 'composer' })}>
@@ -95,10 +95,11 @@ export function Feed() {
       </div>
       <div className="list mt12">
         {state.posts.map((p) => {
-          const a = state.users[p.authorId] as Artisan;
+          const a = state.users[p.authorId];
+          if (!a || a.role === 'client') return null;
           const liked = !!user && p.likes.includes(user.id);
           return (
-            <article className="card post" key={p.id}>
+            <article className={'card post' + (p.stock ? ' stock-post' : '')} key={p.id}>
               <div className="post-hd">
                 <Avatar spec={a.avatar} size={40} />
                 <div>
@@ -106,13 +107,29 @@ export function Feed() {
                     {a.name} <VTick />
                   </b>
                   <div className="small">
-                    {a.trade} · <Stars rating={a.rating} /> · {timeAgo(p.at)}
+                    {a.role === 'artisan' ? (
+                      <>
+                        {a.trade} · <Stars rating={a.rating} />
+                      </>
+                    ) : (
+                      <>Market vendor · {a.market}</>
+                    )}{' '}
+                    · {timeAgo(p.at)}
                   </div>
                 </div>
               </div>
               <div className="post-img">
                 <Picture src={p.image} alt={p.text} />
+                {p.stock && <span className="stock-badge">In stock</span>}
               </div>
+              {p.stock && (
+                <div className="stock-row">
+                  <b>{p.stock.name}</b>
+                  <span>
+                    {formatNaira(p.stock.price)} / {p.stock.unit}
+                  </span>
+                </div>
+              )}
               <p>{p.text}</p>
               <div className="acts">
                 <button className={liked ? 'liked' : ''} aria-pressed={liked} onClick={() => dispatch({ type: 'toggleLike', postId: p.id })}>
@@ -123,7 +140,8 @@ export function Feed() {
                   <Icon name="comment" size={18} />
                   {p.comments.length}
                 </button>
-                {user?.role === 'client' && (
+                {p.stock && <span className="small ml-auto">{a.area.split(',')[0]}</span>}
+                {user?.role === 'client' && a.role === 'artisan' && (
                   <button className="ml-auto" onClick={() => go({ name: 'pro', id: a.id })}>
                     Book {a.name.split(' ')[0]} <Icon name="chev" size={14} />
                   </button>
@@ -199,14 +217,16 @@ export function Comments({ postId }: { postId: string }) {
 
 /* ---------------- Composer ---------------- */
 export function Composer() {
-  const { dispatch, go } = useApp();
-  const [image, setImage] = useState<string>('cabinet');
+  const { dispatch, go, user } = useApp();
+  const vendor = user?.role === 'vendor';
+  const [image, setImage] = useState<string>(vendor ? 'tiles' : 'cabinet');
   const [text, setText] = useState('');
+  const [stock, setStock] = useState({ name: '', price: '', unit: '' });
   return (
     <>
       <BackBar label="Cancel" />
-      <h2>Post your work</h2>
-      <p className="sub">Show finished jobs. Clients and other artisans can like and comment.</p>
+      <h2>{vendor ? 'Post your stock' : 'Post your work'}</h2>
+      <p className="sub">{vendor ? 'Show materials you have in your shop. Artisans and clients in your city see them in the feed.' : 'Show finished jobs. Clients and other artisans can like and comment.'}</p>
       <div className="composer-preview">
         <Picture src={image} />
       </div>
@@ -224,14 +244,37 @@ export function Composer() {
           </button>
         ))}
       </div>
+      {vendor && (
+        <>
+          <label className="f" htmlFor="sname">
+            Material
+          </label>
+          <input id="sname" type="text" placeholder="e.g. Floor tiles 60×60" value={stock.name} onChange={(e) => setStock({ ...stock, name: e.target.value })} />
+          <div className="row">
+            <div>
+              <label className="f" htmlFor="sprice">
+                Price (₦)
+              </label>
+              <input id="sprice" type="text" inputMode="numeric" placeholder="9500" value={stock.price} onChange={(e) => setStock({ ...stock, price: e.target.value })} />
+            </div>
+            <div>
+              <label className="f" htmlFor="sunit">
+                Per
+              </label>
+              <input id="sunit" type="text" placeholder="carton, bag, piece…" value={stock.unit} onChange={(e) => setStock({ ...stock, unit: e.target.value })} />
+            </div>
+          </div>
+        </>
+      )}
       <label className="f" htmlFor="ptext">
-        Caption
+        {vendor ? 'Description' : 'Caption'}
       </label>
-      <textarea id="ptext" placeholder="What did you build? Where?" value={text} onChange={(e) => setText(e.target.value)} maxLength={500} />
+      <textarea id="ptext" placeholder={vendor ? 'Brand, colours, quantity available, delivery areas…' : 'What did you build? Where?'} value={text} onChange={(e) => setText(e.target.value)} maxLength={500} />
       <button
         className="btn primary mt14"
         onClick={() => {
-          if (dispatch({ type: 'createPost', image, text }, 'Posted to Community.')) go({ name: 'feed' });
+          const post = vendor ? { type: 'createPost' as const, image, text, stock: { name: stock.name, price: Number(stock.price.replace(/\D/g, '')) || 0, unit: stock.unit } } : { type: 'createPost' as const, image, text };
+          if (dispatch(post, 'Posted to Community.')) go({ name: 'feed' });
         }}
       >
         Post to Community
@@ -264,7 +307,7 @@ export function Wallet() {
         <div className="bal">{formatNaira(bal)}</div>
         {held > 0 && <div className="esc">{user.role === 'client' ? `${formatNaira(held)} held by Allyfe for your active jobs` : `${formatNaira(held)} on the way when clients confirm`}</div>}
         <div className="row mt12">
-          {(user.role === 'client' || user.role === 'company') && (
+          {user.role === 'client' && (
             <button className="btn orange sm" onClick={() => dispatch({ type: 'topUp', amount: amt || 100000 }, `${formatNaira(amt || 100000)} added to your wallet.`) && setAmount('')}>
               Top up {amt ? formatNaira(amt) : '₦100,000'}
             </button>
@@ -283,7 +326,7 @@ export function Wallet() {
           ? 'Money you pay for a job is held by Allyfe and released only when you tap Work completed.'
           : user.role === 'artisan'
             ? `Job payments land here when the client confirms. Withdraw to ${bank}.`
-            : `Rental fees land here when the artisan's client confirms. Withdraw to ${bank}.`}
+            : `Materials payments land here when the client confirms delivery. Withdraw to ${bank}.`}
       </p>
       <h3>Transactions</h3>
       {txns.length ? (
@@ -396,7 +439,7 @@ export function Me() {
         <div>
           <div className="nm">{user.name}</div>
           <div className="sl">
-            {user.role === 'client' ? 'Client' : user.role === 'artisan' ? (user as Artisan).trade : user.role === 'vendor' ? 'Market vendor' : 'Tool company'} · {user.area}
+            {user.role === 'client' ? 'Client' : user.role === 'artisan' ? (user as Artisan).trade : 'Market vendor'} · {user.area}
           </div>
           <div className="sl">{user.phone}</div>
         </div>
@@ -431,13 +474,6 @@ export function Me() {
           <button className="card menu-row" onClick={() => go({ name: 'profileEdit' })}>
             <Icon name="user" size={20} />
             <span className="grow">Profile, team & apprentices</span>
-            <Icon name="chev" size={14} />
-          </button>
-        )}
-        {user.role === 'artisan' && (
-          <button className="card menu-row" onClick={() => go({ name: 'store' })}>
-            <Icon name="tools" size={20} />
-            <span className="grow">Tool Store</span>
             <Icon name="chev" size={14} />
           </button>
         )}
@@ -497,9 +533,13 @@ export function Terms() {
         <h4>2. Quotations and payment</h4>
         <p>Artisans quote materials and a service fee. When you accept a quotation you pay the full amount into Allyfe, which holds it. Nobody is paid at that point.</p>
         <h4>3. Materials</h4>
-        <p>The materials list goes to verified market vendors in your city. The vendor is paid when you tap “I’ve received the materials”. Check every item before you confirm.</p>
+        <p>The materials list goes to verified market vendors in your city. Vendors can see your phone number so they can confirm delivery and the exact materials (brand, colour, texture) with you. The vendor is paid when you tap “I’ve received the materials”. Check every item before you confirm.</p>
+        <h4>Refusing materials</h4>
+        <p>If the materials are wrong, damaged, short, substandard or not what was quoted, tap “I’m not happy with the materials” and choose a reason. The vendor is not paid for that delivery and, <b>under the Allyfe vendor contract, must come back and collect the goods</b> at their own cost. The order then goes back out so the right materials can be delivered.</p>
         <h4>4. The work</h4>
         <p>The artisan taps “Work started” on the agreed day and “Work finished” when done. The artisan is paid only when you tap “Job done”. Premium jobs are inspected by an Allyfe supervisor first.</p>
+        <h4>Allyfe fee</h4>
+        <p>Allyfe keeps a company fee from the artisan’s service fee when a job is done: <b>5% on Basic and Pro jobs, 7% on Premium jobs</b>. Clients pay the quoted price and nothing extra. Materials carry no fee.</p>
         <h4>5. Not as described</h4>
         <p>If the artisan arrives and the job is not what you described, they may mark it “Not as described”. You then forfeit 50% of the service fee for their visit; the other 50% is refunded. Materials already delivered stay with you.</p>
         <h4>6. If the artisan doesn’t show up</h4>

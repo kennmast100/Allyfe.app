@@ -431,3 +431,17 @@ details summary { cursor: pointer; }
 .terms h4 { margin: 16px 0 4px; font-size: 14px; }
 .terms p, .terms li { font-size: 13px; line-height: 1.55; color: var(--ink); margin: 0 0 6px; }
 .terms ul { padding-left: 18px; margin: 4px 0; }
+
+/* ---------- v3: fees, refused materials, vendor stock ---------- */
+.tag.tier-basic { background: var(--grey-soft); color: var(--ink); margin: 0; }
+.tag.tier-pro { background: var(--brand-soft); color: var(--midnight); margin: 0; }
+.tag.tier-premium { background: var(--orange); color: var(--midnight); margin: 0; }
+.reject-box { display: grid; gap: 4px; border-color: var(--warn); background: var(--warn-soft); }
+.reject-line { color: var(--bad); margin-top: 4px; }
+.collect { border-color: var(--bad); display: grid; gap: 6px; }
+.contact { display: grid; grid-template-columns: minmax(0, 1fr) auto auto; gap: 8px; align-items: center; background: #fff; border: 1px solid var(--line); border-radius: 14px; padding: 10px 12px; margin-top: 12px; }
+.contact a { text-decoration: none; }
+.post-img { position: relative; }
+.stock-badge { position: absolute; left: 10px; top: 10px; background: var(--teal); color: #fff; font-size: 11px; font-weight: 800; border-radius: 8px; padding: 3px 8px; }
+.stock-row { display: flex; justify-content: space-between; align-items: baseline; gap: 10px; background: #e0f7f4; border-radius: 12px; padding: 8px 12px; margin-bottom: 8px; font-size: 13px; }
+.stock-row span { font-weight: 800; white-space: nowrap; }

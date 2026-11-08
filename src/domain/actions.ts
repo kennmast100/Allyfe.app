@@ -1,4 +1,4 @@
-import type { AppState, Apprentice, Artisan, Category, City, Company, ImageRef, Job, QuoteLine, Tier, ToolKind, TxnKind, User, Vendor } from './types';
+import type { AppState, Apprentice, Artisan, Category, City, ImageRef, Job, QuoteLine, StockItem, Tier, TxnKind, User, Vendor } from './types';
 import {
   MIN_DESCRIPTION,
   NO_SHOW_STARS,
@@ -13,8 +13,8 @@ import {
   formatNaira,
   isOnOrAfterDay,
   jobStars,
-  jobToolCost,
   linesTotal,
+  MATERIAL_REJECT_REASONS,
   misdescribedSplit,
 } from './rules';
 import { seedState } from './seed';
@@ -71,10 +71,9 @@ export type Action =
   | { type: 'addVerificationFile'; key: string; image: ImageRef }
   | { type: 'submitVerification' }
   | { type: 'approveVerification'; userId: string }
-  | { type: 'requestRental'; toolId: string; days: number; jobId?: string }
-  | { type: 'respondRental'; rentalId: string; approve: boolean }
-  | { type: 'addTool'; name: string; pricePerDay: number; kind: ToolKind }
-  | { type: 'createPost'; image: ImageRef; text: string }
+  | { type: 'rejectMaterials'; jobId: string; reason: string; note: string }
+  | { type: 'vendorPickedUp'; jobId: string }
+  | { type: 'createPost'; image: ImageRef; text: string; stock?: StockItem }
   | { type: 'toggleLike'; postId: string }
   | { type: 'addComment'; postId: string; text: string }
   | { type: 'markAlertsRead' };
@@ -99,7 +98,7 @@ export function reduce(prev: AppState, action: Action, now = Date.now(), nonce?:
   const me = (): User => (s.sessionUserId && s.users[s.sessionUserId]) || fail('Please sign in first.');
   const meAs = <R extends User['role']>(role: R) => {
     const u = me();
-    if (u.role !== role) fail(`Only ${role === 'company' ? 'tool companies' : role + 's'} can do that.`);
+    if (u.role !== role) fail(`Only ${role}s can do that.`);
     return u as Extract<User, { role: R }>;
   };
   const name = (uid: string) => s.users[uid]?.name ?? 'Someone';
@@ -162,7 +161,7 @@ export function reduce(prev: AppState, action: Action, now = Date.now(), nonce?:
     }
     case 'topUp': {
       const u = me();
-      if (u.role === 'artisan' || u.role === 'vendor') fail('Top-ups are for clients and tool companies. You are paid through jobs.');
+      if (u.role === 'artisan' || u.role === 'vendor') fail('Top-ups are for clients. You are paid through jobs.');
       if (!(action.amount > 0)) fail('Enter an amount.');
       credit(u.id, action.amount, `Top-up from ${u.bank.split(' ')[0]}`);
       break;
@@ -258,7 +257,7 @@ export function reduce(prev: AppState, action: Action, now = Date.now(), nonce?:
       });
       log(j, `Accepted ${name(b.artisanId)}'s bid · ${formatNaira(charge.total)} held by Allyfe`, c.name);
       if (charge.billable.length) {
-        j.materialsOrder = { id: id('o'), lines: charge.billable, total: charge.materials, status: 'open', at: now };
+        j.materialsOrder = { id: id('o'), lines: charge.billable, total: charge.materials, status: 'open', at: now, rejections: [] };
         j.status = 'awarded';
         vendorsIn(j.city).forEach((v) => alert(v.id, `New materials request in ${j.city}: ${formatNaira(charge.materials)} for “${j.title}”.`, j.id));
         alert(b.artisanId, `${c.name} accepted your bid for “${j.title}”. A vendor will deliver the materials; you start on ${b.day}.`, j.id);
@@ -316,6 +315,37 @@ export function reduce(prev: AppState, action: Action, now = Date.now(), nonce?:
       log(j, 'Client received the materials', c.name);
       alert(o.vendorId!, `${c.name} received the materials. ${formatNaira(o.total)} is in your wallet.`, j.id);
       alert(j.artisanId!, `Materials for “${j.title}” are at the client's home. Go and start work on ${j.scheduledDay}. Address: ${j.addr}.`, j.id);
+      break;
+    }
+
+    case 'rejectMaterials': {
+      const j = job(action.jobId);
+      const c = ownClient(j);
+      expect(j, 'materials_on_the_way');
+      const o = j.materialsOrder!;
+      if (!(MATERIAL_REJECT_REASONS as readonly string[]).includes(action.reason)) fail('Choose a reason from the list.');
+      if (action.reason === 'Other' && !action.note.trim()) fail('Tell the vendor what is wrong with the materials.');
+      const v = s.users[o.vendorId!] as Vendor;
+      o.rejections.push({ vendorId: v.id, reason: action.reason, note: action.note.trim(), at: now });
+      // The vendor is not paid. The order goes back out so a vendor can supply it properly.
+      o.status = 'open';
+      o.vendorId = undefined;
+      o.waybill = undefined;
+      j.status = 'awarded';
+      log(j, `Materials not accepted: ${action.reason}`, c.name);
+      alert(v.id, `${c.name} did NOT accept the materials for “${j.title}”: ${action.reason}${action.note.trim() ? ` (“${action.note.trim()}”)` : ''}. Under your vendor contract, go back and collect them from ${j.addr}. You will not be paid for this delivery.`, j.id);
+      alert(j.artisanId!, `${c.name} refused the materials for “${j.title}” (${action.reason}). A vendor will deliver them again before you start.`, j.id);
+      vendorsIn(j.city).forEach((x) => alert(x.id, `Materials request reopened in ${j.city}: ${formatNaira(o.total)} for “${j.title}”.`, j.id));
+      break;
+    }
+    case 'vendorPickedUp': {
+      const v = meAs('vendor');
+      const j = job(action.jobId);
+      const r = j.materialsOrder?.rejections.find((x) => x.vendorId === v.id && !x.pickedUpAt);
+      if (!r) fail('There is nothing to collect for this job.');
+      r!.pickedUpAt = now;
+      log(j, 'Vendor collected the refused materials', v.name);
+      alert(j.clientId, `${v.name} has collected the materials you refused for “${j.title}”.`, j.id);
       break;
     }
 
@@ -383,23 +413,16 @@ export function reduce(prev: AppState, action: Action, now = Date.now(), nonce?:
       const j = job(action.jobId);
       const c = ownClient(j);
       expect(j, 'awaiting_client');
-      const split = completionSplit(j, s.rentals);
-      split.companies.forEach((x) => {
-        const r = s.rentals.find((y) => y.id === x.rentalId)!;
-        const tool = s.tools.find((t) => t.id === r.toolId);
-        r.status = 'paid';
-        credit(x.companyId, x.amount, `Rental · ${tool?.name ?? 'tool'} · job ${j.ref}`);
-        alert(x.companyId, `${formatNaira(x.amount)} credited for the ${tool?.name ?? 'tool'} rental.`);
-      });
-      s.rentals.filter((r) => r.jobId === j.id && r.status === 'requested').forEach((r) => (r.status = 'declined'));
+      const split = completionSplit(j);
       const a = s.users[j.artisanId!] as Artisan;
-      credit(a.id, split.artisan, `Service fee · ${j.title}`);
+      credit(a.id, split.artisan, `Service fee · ${j.title} (after ${split.rate} Allyfe fee)`);
+      credit(ALLYFE_ACCOUNT, split.platform, `${split.rate} fee · ${j.tier} job ${j.ref}`);
       a.jobsDone += 1;
       txn(c.id, `Service fee released · ${j.title}`, j.escrow, 'out');
       j.escrow = 0;
       j.status = 'completed';
       log(j, 'Job done · artisan paid', c.name);
-      alert(a.id, `${c.name} confirmed the work. ${formatNaira(split.artisan)} is in your wallet.`, j.id);
+      alert(a.id, `${c.name} confirmed the work. ${formatNaira(split.artisan)} is in your wallet (${formatNaira(split.serviceFee)} service fee minus the ${split.rate} Allyfe fee).`, j.id);
       break;
     }
     case 'rateJob': {
@@ -532,57 +555,19 @@ export function reduce(prev: AppState, action: Action, now = Date.now(), nonce?:
       break;
     }
 
-    /* ---------- tool store ---------- */
-    case 'requestRental': {
-      const a = meAs('artisan');
-      const tool = s.tools.find((t) => t.id === action.toolId) || fail('That tool is no longer listed.');
-      const co = s.users[tool.companyId] as Company;
-      if (co.verification.status !== 'verified') fail('This company is not verified yet.');
-      if (!(action.days >= 1)) fail('Pick how many days.');
-      const fee = tool.pricePerDay * action.days;
-      if (action.jobId) {
-        const j = job(action.jobId);
-        assignedArtisan(j);
-        expect(j, 'in_progress');
-        const committed = jobToolCost(j.id, s.rentals) + s.rentals.filter((r) => r.jobId === j.id && r.status === 'requested').reduce((t, r) => t + r.fee, 0);
-        if (committed + fee > j.escrow) fail('Tool rentals cannot cost more than your service fee.');
-      } else {
-        debit(a.id, fee, `Rental held · ${tool.name}`, 'hold');
-      }
-      s.rentals.unshift({ id: id('r'), toolId: tool.id, companyId: co.id, artisanId: a.id, days: action.days, fee, jobId: action.jobId, status: 'requested', at: now });
-      alert(co.id, `${a.name} wants to rent your ${tool.name} for ${action.days} day${action.days > 1 ? 's' : ''}.`);
-      break;
-    }
-    case 'respondRental': {
-      const co = meAs('company');
-      const r = s.rentals.find((x) => x.id === action.rentalId) || fail('Request not found.');
-      if (r.companyId !== co.id) fail('This request is for another company.');
-      if (r.status !== 'requested') fail('You already answered this request.');
-      const tool = s.tools.find((t) => t.id === r.toolId)!;
-      if (action.approve) {
-        r.status = r.jobId ? 'approved' : 'paid';
-        if (!r.jobId) credit(co.id, r.fee, `Rental · ${tool.name}`);
-        alert(r.artisanId, `${co.name} approved your ${tool.name} rental. Pick it up with your Allyfe ID.`);
-      } else {
-        r.status = 'declined';
-        if (!r.jobId) credit(r.artisanId, r.fee, `Rental refund · ${tool.name}`);
-        alert(r.artisanId, `${co.name} could not rent you the ${tool.name}.${r.jobId ? '' : ' Your money is back in your wallet.'}`);
-      }
-      break;
-    }
-    case 'addTool': {
-      const co = meAs('company');
-      if (!action.name.trim()) fail('Add the tool name.');
-      if (!(action.pricePerDay > 0)) fail('Add a daily price.');
-      s.tools.push({ id: id('t'), companyId: co.id, name: action.name.trim(), kind: action.kind, pricePerDay: Math.round(action.pricePerDay) });
-      break;
-    }
-
     /* ---------- feed ---------- */
     case 'createPost': {
-      const a = meAs('artisan');
+      const u = me();
+      if (u.role !== 'artisan' && u.role !== 'vendor') fail('Only artisans and vendors can post to the feed.');
       if (!action.text.trim()) fail('Add a caption first.');
-      s.posts.unshift({ id: id('p'), authorId: a.id, image: action.image, text: action.text.trim(), likes: [], comments: [], at: now });
+      let stock: StockItem | undefined;
+      if (action.stock) {
+        if (u.role !== 'vendor') fail('Only vendors can list materials for sale.');
+        if (!action.stock.name.trim()) fail('Name the material.');
+        if (!(action.stock.price > 0)) fail('Add a price.');
+        stock = { name: action.stock.name.trim(), price: Math.round(action.stock.price), unit: action.stock.unit.trim() || 'piece' };
+      }
+      s.posts.unshift({ id: id('p'), authorId: u.id, image: action.image, text: action.text.trim(), likes: [], comments: [], at: now, ...(stock ? { stock } : {}) });
       break;
     }
     case 'toggleLike': {
@@ -613,19 +598,16 @@ export function reduce(prev: AppState, action: Action, now = Date.now(), nonce?:
   return s;
 }
 
-export const VERIFICATION_ITEMS: Record<'artisan' | 'company' | 'vendor', { key: string; title: string; hint: string }[]> = {
+/** Wallet that collects Allyfe's company fees. */
+export const ALLYFE_ACCOUNT = 'allyfe';
+
+export const VERIFICATION_ITEMS: Record<'artisan' | 'vendor', { key: string; title: string; hint: string }[]> = {
   artisan: [
     { key: 'id', title: 'Government ID', hint: "NIN slip, driver's licence or voter's card" },
     { key: 'selfie', title: 'Selfie holding your ID', hint: 'So we know the ID is yours' },
     { key: 'w1', title: 'Past work photo 1', hint: 'A job you did yourself' },
     { key: 'w2', title: 'Past work photo 2', hint: 'Another finished job' },
     { key: 'w3', title: 'Past work photo 3', hint: 'Before and after works well' },
-  ],
-  company: [
-    { key: 'cac', title: 'CAC registration certificate', hint: 'Photo or scan of the certificate' },
-    { key: 'shop', title: 'Photo of your shop or yard', hint: 'Showing your signboard' },
-    { key: 'owner', title: 'Owner or manager ID', hint: "NIN slip, driver's licence or passport" },
-    { key: 'w1', title: 'Photo of your tools', hint: 'With your company name visible' },
   ],
   vendor: [
     { key: 'cac', title: 'CAC or market association certificate', hint: 'Photo or scan of the certificate' },

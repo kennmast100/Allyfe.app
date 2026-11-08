@@ -1,4 +1,4 @@
-export type Role = 'client' | 'artisan' | 'company' | 'vendor';
+export type Role = 'client' | 'artisan' | 'vendor';
 export type Tier = 'Basic' | 'Pro' | 'Premium';
 export type Category = 'Home Renovation' | 'Interior Design' | 'Plumbing' | 'Electrical' | 'Painting';
 export type City = 'Port Harcourt' | 'Lagos' | 'Abuja' | 'Aba';
@@ -40,10 +40,9 @@ export type Artisan = BaseUser & {
   teamMembers: string[];
   apprentices: Apprentice[];
 };
-export type Company = BaseUser & { role: 'company'; bank: string; verification: Verification };
 /** Market vendor: supplies the materials in an accepted quotation and delivers them to the client. */
 export type Vendor = BaseUser & { role: 'vendor'; bank: string; verification: Verification; market: string };
-export type User = Client | Artisan | Company | Vendor;
+export type User = Client | Artisan | Vendor;
 
 /** One line of an artisan's quotation: a catalogue item or a custom item. */
 export type QuoteLine = { key: string; name: string; unit: string; unitPrice: number; qty: number };
@@ -61,6 +60,8 @@ export type Bid = {
 };
 
 export type OrderStatus = 'open' | 'accepted' | 'dispatched' | 'delivered' | 'cancelled';
+/** A delivery the client refused. The vendor must collect the goods (vendor contract). */
+export type MaterialRejection = { vendorId: string; reason: string; note: string; at: number; pickedUpAt?: number };
 export type MaterialOrder = {
   id: string;
   lines: QuoteLine[];
@@ -69,6 +70,7 @@ export type MaterialOrder = {
   vendorId?: string;
   waybill?: string;
   at: number;
+  rejections: MaterialRejection[];
 };
 
 export type JobStatus =
@@ -121,25 +123,10 @@ export type Job = {
   createdAt: number;
 };
 
-export type Tool = { id: string; companyId: string; name: string; kind: ToolKind; pricePerDay: number };
-export type ToolKind = 'drill' | 'cutter' | 'scaffold' | 'sprayer' | 'generator' | 'mixer';
-
-export type RentalStatus = 'requested' | 'approved' | 'declined' | 'paid';
-export type Rental = {
-  id: string;
-  toolId: string;
-  companyId: string;
-  artisanId: string;
-  days: number;
-  fee: number;
-  /** Paid out of this job's service fee at completion; otherwise paid from the artisan's wallet up front. */
-  jobId?: string;
-  status: RentalStatus;
-  at: number;
-};
-
 export type Comment = { id: string; authorId: string; text: string; at: number };
-export type Post = { id: string; authorId: string; image: ImageRef; text: string; likes: string[]; comments: Comment[]; at: number };
+/** A vendor's post can advertise an item in stock. */
+export type StockItem = { name: string; price: number; unit: string };
+export type Post = { id: string; authorId: string; image: ImageRef; text: string; likes: string[]; comments: Comment[]; at: number; stock?: StockItem };
 
 export type TxnKind = 'in' | 'out' | 'hold';
 export type Txn = { id: string; label: string; amount: number; kind: TxnKind; at: number };
@@ -151,8 +138,6 @@ export type AppState = {
   sessionUserId: string | null;
   users: Record<string, User>;
   jobs: Job[];
-  tools: Tool[];
-  rentals: Rental[];
   posts: Post[];
   wallets: Record<string, number>;
   txns: Record<string, Txn[]>;

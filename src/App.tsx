@@ -3,20 +3,19 @@ import { BottomNav, dayLabel } from './components/ui';
 import { Icon } from './components/art';
 import { useApp, type Route } from './store/store';
 import type { User } from './domain/types';
-import { Applied, ArtisanHome, ArtisanJob, ArtisanJobs, ProfileEdit, QuoteForm, Rent, Store, Verify, useStartDayJobs } from './screens/artisan';
+import { Applied, ArtisanHome, ArtisanJob, ArtisanJobs, ProfileEdit, QuoteForm, Verify, useStartDayJobs } from './screens/artisan';
 import { BidReview, ClientHome, ClientJob, Discover, JobPosted, PostJob, ProProfile, Projects, RateJob } from './screens/client';
-import { CompanyHome, Requests, Tools } from './screens/company';
 import { OrderDetail, Orders, VendorHome } from './screens/vendor';
 import { Alerts, Comments, Composer, Feed, Me, Offline, OfflineBanner, SignIn, Terms, Wallet } from './screens/shared';
 
 /** Screens that cannot work without a connection show the Offline screen instead. */
-const NEEDS_NETWORK: Route['name'][] = ['postJob', 'bid', 'quote', 'composer', 'rent', 'verify', 'rate', 'order', 'profileEdit'];
+const NEEDS_NETWORK: Route['name'][] = ['postJob', 'bid', 'quote', 'composer', 'verify', 'rate', 'order', 'profileEdit'];
 
 function Screen({ route, user }: { route: Route; user: User }) {
   const { state } = useApp();
   switch (route.name) {
     case 'home':
-      return user.role === 'client' ? <ClientHome /> : user.role === 'artisan' ? <ArtisanHome /> : user.role === 'vendor' ? <VendorHome /> : <CompanyHome />;
+      return user.role === 'client' ? <ClientHome /> : user.role === 'artisan' ? <ArtisanHome /> : <VendorHome />;
     case 'discover':
       return <Discover category={route.category} />;
     case 'pro':
@@ -47,14 +46,6 @@ function Screen({ route, user }: { route: Route; user: User }) {
       return <Verify />;
     case 'profileEdit':
       return <ProfileEdit />;
-    case 'store':
-      return <Store jobId={route.jobId} />;
-    case 'rent':
-      return <Rent toolId={route.toolId} jobId={route.jobId} />;
-    case 'requests':
-      return <Requests />;
-    case 'tools':
-      return <Tools />;
     case 'orders':
       return <Orders tab={route.tab} key={route.tab} />;
     case 'order':
