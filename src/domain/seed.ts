@@ -1,7 +1,7 @@
 import type { Alert, AppState, Artisan, Category, Client, Job, Post, QuoteLine, Txn, User, Vendor } from './types';
 import { MATERIALS, dayKey, earliestWorkDay, linesTotal } from './rules';
 
-export const STATE_VERSION = 3;
+export const STATE_VERSION = 4;
 
 const H = 3600_000;
 const D = 24 * H;
@@ -44,9 +44,9 @@ export function seedState(now = Date.now()): AppState {
     artisan({ id: 'a-femi', name: 'Femi Adeyemi', phone: '0803 000 1313', city: 'Lagos', trade: 'Plumber', categories: ['Plumbing'], rating: 4.8, ratingCount: 70, jobsDone: 75, area: 'Yaba, Lagos', years: 8, bio: 'Plumbing for homes and offices in Lagos mainland.', avatar: { bg: '#E0F2FE', skin: '#6B3F22', hair: 'short', shirt: '#0E1F3B' }, work: ['tiles'], bank: 'GTBank •••• 1313' }),
   ];
   const vendors: Vendor[] = [
-    { id: 'v-mile3', role: 'vendor', city: 'Port Harcourt', market: 'Mile 3 Market', name: 'Mile 3 Building Supplies', phone: '0803 000 1414', area: 'Mile 3, Port Harcourt', bank: 'UBA •••• 1414', avatar: { bg: '#DCFCE7', skin: '#6B3F22', hair: 'wrap', shirt: '#15803D' }, verification: { status: 'verified', files: { cac: 'room', shop: 'room', owner: 'room', w1: 'room' } } },
-    { id: 'v-oilmill', role: 'vendor', city: 'Port Harcourt', market: 'Oil Mill Market', name: 'Oil Mill Electricals & Plumbing', phone: '0803 000 1515', area: 'Oil Mill, Port Harcourt', bank: 'Zenith •••• 1515', avatar: { bg: '#E0F2FE', skin: '#5A3420', hair: 'short', shirt: '#0369A1' }, verification: { status: 'verified', files: { cac: 'room', shop: 'room', owner: 'room', w1: 'room' } } },
-    { id: 'v-tradefair', role: 'vendor', city: 'Lagos', market: 'Trade Fair Complex', name: 'Trade Fair Supplies', phone: '0803 000 1616', area: 'Ojo, Lagos', bank: 'GTBank •••• 1616', avatar: { bg: '#EDE9FE', skin: '#7A4A2A', hair: 'short', shirt: '#6D28D9' }, verification: { status: 'verified', files: { cac: 'room', shop: 'room', owner: 'room', w1: 'room' } } },
+    { id: 'v-mile3', role: 'vendor', city: 'Port Harcourt', market: 'Mile 3 Market', ownerName: 'Ngozi Eke', categories: ['Home Renovation', 'Interior Design', 'Plumbing', 'Electrical', 'Painting'], name: 'Mile 3 Building Supplies', phone: '0803 000 1414', area: 'Mile 3, Port Harcourt', bank: 'UBA •••• 1414', avatar: { bg: '#DCFCE7', skin: '#6B3F22', hair: 'wrap', shirt: '#15803D' }, verification: { status: 'verified', files: { cac: 'room', shop: 'room', owner: 'room', w1: 'room' } } },
+    { id: 'v-oilmill', role: 'vendor', city: 'Port Harcourt', market: 'Oil Mill Market', ownerName: 'Musa Bello', categories: ['Electrical', 'Plumbing'], name: 'Oil Mill Electricals & Plumbing', phone: '0803 000 1515', area: 'Oil Mill, Port Harcourt', bank: 'Zenith •••• 1515', avatar: { bg: '#E0F2FE', skin: '#5A3420', hair: 'short', shirt: '#0369A1' }, verification: { status: 'verified', files: { cac: 'room', shop: 'room', owner: 'room', w1: 'room' } } },
+    { id: 'v-tradefair', role: 'vendor', city: 'Lagos', market: 'Trade Fair Complex', ownerName: 'Bisi Ade', categories: ['Plumbing', 'Electrical', 'Home Renovation'], name: 'Trade Fair Supplies', phone: '0803 000 1616', area: 'Ojo, Lagos', bank: 'GTBank •••• 1616', avatar: { bg: '#EDE9FE', skin: '#7A4A2A', hair: 'short', shirt: '#6D28D9' }, verification: { status: 'verified', files: { cac: 'room', shop: 'room', owner: 'room', w1: 'room' } } },
   ];
   const users: Record<string, User> = {};
   [...clients, ...artisans, ...vendors].forEach((u) => (users[u.id] = u));

@@ -322,3 +322,58 @@ export function journeyIndex(job: Job): number {
       return -1;
   }
 }
+
+/* ---------------- accounts ---------------- */
+
+/**
+ * Nigerian mobile numbers in one canonical form, +234 followed by 10 digits.
+ * Accepts 0803…, 803…, 234803… and +234 803…. Returns null if it isn't a valid mobile number.
+ */
+export function normalizePhone(input: string): string | null {
+  let d = input.replace(/\D/g, '');
+  if (d.startsWith('234')) d = d.slice(3);
+  if (d.startsWith('0')) d = d.slice(1);
+  return /^[789][01]\d{8}$/.test(d) ? '+234' + d : null;
+}
+
+/** 0803 000 1111 style, for showing a canonical number. */
+export function displayPhone(canonical: string): string {
+  const d = '0' + canonical.replace(/^\+234/, '');
+  return `${d.slice(0, 4)} ${d.slice(4, 7)} ${d.slice(7)}`;
+}
+
+export const TRADES: { trade: string; categories: Category[] }[] = [
+  { trade: 'Carpenter', categories: ['Home Renovation', 'Interior Design'] },
+  { trade: 'Plumber', categories: ['Plumbing'] },
+  { trade: 'Electrician', categories: ['Electrical'] },
+  { trade: 'Painter', categories: ['Painting', 'Interior Design'] },
+  { trade: 'Tiler', categories: ['Home Renovation'] },
+  { trade: 'Mason / Bricklayer', categories: ['Home Renovation'] },
+  { trade: 'POP / Ceiling installer', categories: ['Interior Design'] },
+  { trade: 'Welder / Fabricator', categories: ['Home Renovation'] },
+  { trade: 'Interior decorator', categories: ['Interior Design', 'Painting'] },
+];
+
+export const BANKS = [
+  'Access Bank', 'Ecobank', 'Fidelity Bank', 'First Bank', 'FCMB', 'GTBank', 'Kuda', 'Moniepoint', 'Opay', 'PalmPay',
+  'Polaris Bank', 'Stanbic IBTC', 'Sterling Bank', 'UBA', 'Union Bank', 'Wema Bank', 'Zenith Bank',
+] as const;
+
+/** Nigerian account numbers (NUBAN) are 10 digits. */
+export const validAccountNumber = (n: string) => /^\d{10}$/.test(n.replace(/\s/g, ''));
+/** Only the bank and last four digits are kept on the profile. */
+export const maskBank = (bankName: string, accountNumber: string) => `${bankName} •••• ${accountNumber.replace(/\s/g, '').slice(-4)}`;
+
+/** A friendly illustrated avatar picked from the name, for people who skip the photo. */
+export function avatarFor(name: string, photo?: string) {
+  const palette = [
+    ['#E8ECF3', '#14B8A6'], ['#FDE7C7', '#0E1F3B'], ['#DBEAFE', '#1F2937'], ['#EDE9FE', '#7C3AED'],
+    ['#DCFCE7', '#15803D'], ['#FFE4E0', '#0E1F3B'], ['#E0F2FE', '#0369A1'], ['#FEF3C7', '#B45309'],
+  ];
+  let h = 0;
+  for (const ch of name) h = (h * 31 + ch.charCodeAt(0)) >>> 0;
+  const [bg, shirt] = palette[h % palette.length];
+  const skins = ['#6B3F22', '#5A3420', '#7A4A2A'];
+  const hairs = ['short', 'long', 'wrap', 'short'] as const;
+  return { bg, shirt, skin: skins[h % skins.length], hair: hairs[(h >> 3) % hairs.length], ...(photo ? { photo } : {}) };
+}

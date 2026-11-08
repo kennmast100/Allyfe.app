@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { Avatar, Icon, Logo, type IconName } from './art';
 import { useApp, type Route } from '../store/store';
 import type { User } from '../domain/types';
+import { vendorServes } from '../domain/actions';
 import { JOB_STATUS_LABEL, JOB_STATUS_TONE, dayKey, journeyIndex, journeySteps } from '../domain/rules';
 import { MediaError, readPhoto, readVideo } from './media';
 import type { Job } from '../domain/types';
@@ -43,7 +44,12 @@ export function BackBar({ label = 'Back', right, onBack }: { label?: string; rig
   );
 }
 
-export const Stars = ({ rating, count }: { rating: number; count?: number }) => (
+export const Stars = ({ rating, count }: { rating: number; count?: number }) =>
+  count === 0 ? (
+    <span className="stars">
+      <b>★</b> New
+    </span>
+  ) : (
   <span className="stars">
     <b>★</b>
     {Math.abs(rating * 10 - Math.round(rating * 10)) < 1e-6 ? rating.toFixed(1) : rating.toFixed(2)}
@@ -134,7 +140,7 @@ export function BottomNav() {
           ]
         : [
             { label: 'Home', icon: 'home', route: { name: 'home' } },
-            { label: 'Requests', icon: 'requests', route: { name: 'orders' }, badge: state.jobs.filter((j) => j.city === user.city && j.status === 'awarded' && j.materialsOrder?.status === 'open').length },
+            { label: 'Requests', icon: 'requests', route: { name: 'orders' }, badge: state.jobs.filter((j) => j.status === 'awarded' && j.materialsOrder?.status === 'open' && vendorServes(user, j)).length },
             { label: 'Post Stock', icon: 'fab', route: { name: 'composer' } },
             { label: 'Feed', icon: 'feed', route: { name: 'feed' } },
             { label: 'Wallet', icon: 'wallet', route: { name: 'wallet' } },

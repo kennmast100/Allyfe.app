@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { Avatar, Icon } from '../components/art';
 import { BackBar, Empty, Notice, TopBar, dayLabel, timeAgo } from '../components/ui';
 import { formatNaira, fullAddress } from '../domain/rules';
+import { vendorServes } from '../domain/actions';
 import type { Job, Vendor } from '../domain/types';
 import { useApp } from '../store/store';
 import { QuoteTable } from './client';
@@ -10,7 +11,7 @@ function useOrders() {
   const { state, user } = useApp();
   const v = user as Vendor;
   const inCity = state.jobs.filter((j) => j.city === v.city && j.materialsOrder);
-  const open = inCity.filter((j) => j.status === 'awarded' && j.materialsOrder!.status === 'open');
+  const open = inCity.filter((j) => j.status === 'awarded' && j.materialsOrder!.status === 'open' && vendorServes(v, j));
   const mine = inCity.filter((j) => j.materialsOrder!.vendorId === v.id);
   /** Deliveries the client refused that this vendor still has to collect. */
   const toCollect = inCity.filter((j) => j.materialsOrder!.rejections.some((r) => r.vendorId === v.id && !r.pickedUpAt));
@@ -155,7 +156,11 @@ export function VendorHome() {
         {open.map((j) => (
           <OrderCard key={j.id} job={j} />
         ))}
-        {!open.length && <Empty title="No new requests">We'll alert you when a client accepts a quotation in {v.city}.</Empty>}
+        {!open.length && (
+          <Empty title="No new requests">
+            {v.verification.status === 'verified' ? `We'll alert you when a client in ${v.city} needs ${v.categories.map((c) => c.toLowerCase()).join(', ')} materials.` : 'Requests appear here once Allyfe verifies your shop.'}
+          </Empty>
+        )}
       </div>
       {active.length > 0 && (
         <>

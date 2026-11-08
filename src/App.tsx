@@ -6,7 +6,8 @@ import type { User } from './domain/types';
 import { Applied, ArtisanHome, ArtisanJob, ArtisanJobs, ProfileEdit, QuoteForm, Verify, useStartDayJobs } from './screens/artisan';
 import { BidReview, ClientHome, ClientJob, Discover, JobPosted, PostJob, ProProfile, Projects, RateJob } from './screens/client';
 import { OrderDetail, Orders, VendorHome } from './screens/vendor';
-import { Alerts, Comments, Composer, Feed, Me, Offline, OfflineBanner, SignIn, Terms, Wallet } from './screens/shared';
+import { Alerts, Comments, Composer, Feed, Me, Offline, OfflineBanner, Terms, Wallet } from './screens/shared';
+import { AuthFlow } from './screens/auth';
 
 /** Screens that cannot work without a connection show the Offline screen instead. */
 const NEEDS_NETWORK: Route['name'][] = ['postJob', 'bid', 'quote', 'composer', 'verify', 'rate', 'order', 'profileEdit'];
@@ -123,7 +124,7 @@ export function App() {
         {!online && <OfflineBanner />}
         {env !== 'local' && env !== 'production' && <div className="env-badge">{env.toUpperCase()}</div>}
         <main className="content" key={user?.id ?? 'out'}>
-          {!user ? <SignIn /> : !online && NEEDS_NETWORK.includes(route.name) ? <Offline /> : <Screen route={route} user={user} />}
+          {!user ? <AuthFlow /> : !online && NEEDS_NETWORK.includes(route.name) ? <Offline /> : <Screen route={route} user={user} />}
         </main>
         {user && <BottomNav />}
         {user?.role === 'artisan' && online && <StartDayPopup />}

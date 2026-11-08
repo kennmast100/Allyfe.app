@@ -9,6 +9,8 @@ export type AvatarSpec = {
   hair: 'short' | 'long' | 'wrap' | 'hat';
   shirt: string;
   vest?: boolean;
+  /** A real profile photo (data URL). When set it replaces the illustration. */
+  photo?: ImageRef;
 };
 
 /** A built-in illustration key, or a data: URL from a real upload (photo or video). */
@@ -41,7 +43,10 @@ export type Artisan = BaseUser & {
   apprentices: Apprentice[];
 };
 /** Market vendor: supplies the materials in an accepted quotation and delivers them to the client. */
-export type Vendor = BaseUser & { role: 'vendor'; bank: string; verification: Verification; market: string };
+export type Vendor = BaseUser & { role: 'vendor'; bank: string; verification: Verification; market: string; ownerName: string; categories: Category[] };
+
+/** Bank details collected at sign-up. Only the masked form is kept on the profile. */
+export type BankDetails = { bankName: string; accountNumber: string; accountName: string };
 export type User = Client | Artisan | Vendor;
 
 /** One line of an artisan's quotation: a catalogue item or a custom item. */

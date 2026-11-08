@@ -69,6 +69,7 @@ export const CategoryIcon = ({ cat }: { cat: Category }) => {
 };
 
 export function Avatar({ spec, size }: { spec: AvatarSpec; size: number }) {
+  if (spec.photo) return <img className="av" src={spec.photo} alt="" style={{ width: size, height: size, objectFit: 'cover' }} />;
   const hair = {
     short: '<path d="M20 25c0-8 6-12 12-12s12 4 12 12c-3-4-7-5-12-5s-9 1-12 5z" fill="#1F1A17"/>',
     long: '<path d="M18 30c-1-11 5-17 14-17s15 6 14 17c-2 6-3 10-3 14H21c0-4-1-8-3-14z" fill="#1F1A17"/>',

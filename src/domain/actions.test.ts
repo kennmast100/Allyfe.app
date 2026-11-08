@@ -279,6 +279,17 @@ describe('vendor demo data', () => {
   });
 });
 
+describe('vendor matching', () => {
+  it('only sends requests to verified vendors who sell that kind of material', () => {
+    let { s, job } = posted({ category: 'Painting', title: 'Paint two rooms', desc: 'Two bedrooms, walls only, about 3 m high. Old paint is peeling in one corner of the bigger room.' });
+    s = as(s, 'a-blessing', { type: 'submitBid', jobId: job.id, bid: bid({ lines: [{ key: 'pa-emul', name: '', unit: '', unitPrice: 0, qty: 2 }] }) });
+    s = as(s, 'c-kenneth', { type: 'acceptBid', jobId: job.id, bidId: s.jobs[0].bids[0].id });
+    expect(s.alerts['v-mile3'][0].text).toMatch(/Paint two rooms/);
+    expect((s.alerts['v-oilmill'] ?? []).some((a) => /Paint two rooms/.test(a.text))).toBe(false);
+    expect(() => as(s, 'v-oilmill', { type: 'vendorAcceptOrder', jobId: job.id })).toThrow(/don't sell painting/);
+  });
+});
+
 describe('profiles', () => {
   it('lets an artisan work as a team and keep apprentices', () => {
     let s = as(seedState(T0), 'a-emeka', { type: 'updateProfile', kind: 'team', teamName: 'Uche Woodworks', teamMembers: ['Emeka Uche', 'Obinna'], bio: '' });

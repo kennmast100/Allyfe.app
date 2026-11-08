@@ -129,7 +129,10 @@ export function ArtisanHome() {
         <span>
           <b>Your reputation</b>
           <small>
-            ★ {me.rating.toFixed(2)} from {me.ratingCount} ratings · #{rank} {me.trade.toLowerCase()} in {me.city}. Manage your team and apprentices.
+            {me.ratingCount
+              ? `★ ${me.rating.toFixed(2)} from ${me.ratingCount} ratings · #${rank} ${me.trade.toLowerCase()} in ${me.city}.`
+              : 'New on Allyfe. Your stars build up as clients rate your jobs.'}{' '}
+            Manage your team and apprentices.
           </small>
         </span>
         <span className="go">

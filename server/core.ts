@@ -1,4 +1,4 @@
-import { DEMO_ONLY_ACTIONS, DomainError, LOCAL_ONLY_ACTIONS, reduce, type Action } from '../src/domain/actions';
+import { AUTH_ONLY_ACTIONS, DEMO_ONLY_ACTIONS, DomainError, LOCAL_ONLY_ACTIONS, reduce, type Action, type SignupProfile } from '../src/domain/actions';
 import { seedState } from '../src/domain/seed';
 import type { AppState } from '../src/domain/types';
 
@@ -28,6 +28,7 @@ export async function createCore(storage: Storage, opts: { allowDemoActions?: bo
       const fail = (status: number, error: string): ActionResult => ({ ok: false, status, error, rev, state });
       if (!req || typeof req !== 'object' || !req.action || typeof req.action.type !== 'string') return fail(400, 'Bad request.');
       if (LOCAL_ONLY_ACTIONS.includes(req.action.type)) return fail(400, 'That action stays on the device.');
+      if (AUTH_ONLY_ACTIONS.includes(req.action.type)) return fail(400, 'Use the sign-up screen to create an account.');
       if (typeof req.nonce !== 'string' || !NONCE.test(req.nonce)) return fail(400, 'Bad request.');
       const isReset = req.action.type === 'reset';
       if (opts.allowDemoActions === false && DEMO_ONLY_ACTIONS.includes(req.action.type)) return fail(403, 'Testing shortcuts are turned off here.');
@@ -52,7 +53,29 @@ export async function createCore(storage: Storage, opts: { allowDemoActions?: bo
     return p;
   }
 
-  return { snapshot, apply };
+  /** Creates an account for a phone number the auth layer has already verified. */
+  function register(phone: string, profile: SignupProfile, nonce: string): Promise<({ userId: string } & ActionResult) | ActionResult> {
+    const run = async () => {
+      try {
+        const next = reduce({ ...state, sessionUserId: null }, { type: 'registerUser', phone, profile }, Date.now(), nonce);
+        const userId = next.sessionUserId!;
+        next.sessionUserId = null;
+        state = next;
+        rev += 1;
+        await storage.save(state, rev);
+        return { ok: true as const, rev, state, userId };
+      } catch (e) {
+        if (e instanceof DomainError) return { ok: false as const, status: 422, error: e.message, rev, state };
+        console.error('register failed', e);
+        return { ok: false as const, status: 500, error: 'Something went wrong. Please try again.', rev, state };
+      }
+    };
+    const p = queue.then(run, run);
+    queue = p;
+    return p;
+  }
+
+  return { snapshot, apply, register };
 }
 
 export function memoryStorage(): Storage {

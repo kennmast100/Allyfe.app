@@ -1,80 +1,9 @@
 import { useEffect, useState } from 'react';
-import { Avatar, Icon, Logo, MARK_SVG, Picture, SCENE_KEYS } from '../components/art';
+import { Avatar, Icon, Logo, Picture, SCENE_KEYS } from '../components/art';
 import { BackBar, Empty, MediaInput, Stars, TopBar, VTick, timeAgo } from '../components/ui';
-import { DEMO_ACCOUNTS } from '../domain/seed';
 import { formatNaira } from '../domain/rules';
 import type { Artisan, User } from '../domain/types';
 import { useApp } from '../store/store';
-
-/* ---------------- Sign in ---------------- */
-export function SignIn() {
-  const { state, dispatch } = useApp();
-  const [phone, setPhone] = useState('');
-  const [code, setCode] = useState('');
-  const [sent, setSent] = useState(false);
-  const [err, setErr] = useState('');
-  const norm = (p: string) => p.replace(/\D/g, '');
-  const match = Object.values(state.users).find((u) => norm(u.phone) === norm(phone));
-
-  return (
-    <div className="signin">
-      <div className="signin-hero">
-        <span className="signin-mark" aria-hidden="true" dangerouslySetInnerHTML={{ __html: MARK_SVG }} />
-        <h1>
-          Ally<span>fe</span>
-        </h1>
-        <p className="tagline">
-          Skilled People <i>•</i> Real Work <i>•</i> Brighter Lives
-        </p>
-      </div>
-      <div className="card signin-card">
-        <h2>Sign in</h2>
-        <p className="sub">We'll text you a 6-digit code.</p>
-        <label className="f" htmlFor="phone">
-          Phone number
-        </label>
-        <input id="phone" type="tel" inputMode="tel" placeholder="0803 000 1111" value={phone} onChange={(e) => (setPhone(e.target.value), setErr(''))} autoComplete="tel" />
-        {sent && (
-          <>
-            <label className="f" htmlFor="code">
-              Code <em>(demo: any 6 digits)</em>
-            </label>
-            <input id="code" type="text" inputMode="numeric" maxLength={6} value={code} onChange={(e) => setCode(e.target.value.replace(/\D/g, ''))} autoComplete="one-time-code" />
-          </>
-        )}
-        {err && <div className="err">{err}</div>}
-        <button
-          className="btn primary mt14"
-          onClick={() => {
-            if (!match) return setErr('No Allyfe account uses that number. Pick a demo account below.');
-            if (!sent) return setSent(true);
-            if (code.length !== 6) return setErr('Enter the 6-digit code.');
-            dispatch({ type: 'signIn', userId: match.id }, `Welcome back, ${match.name.split(' ')[0]}.`);
-          }}
-        >
-          {sent ? 'Verify and sign in' : 'Send code'}
-        </button>
-      </div>
-      <h3>Demo accounts</h3>
-      <div className="list">
-        {DEMO_ACCOUNTS.map((d) => {
-          const u = state.users[d.id];
-          return (
-            <button key={d.id} className="card person-row" onClick={() => dispatch({ type: 'signIn', userId: u.id }, `Signed in as ${u.name}.`)}>
-              <Avatar spec={u.avatar} size={40} />
-              <div className="grow">
-                <b className="t14">{u.name}</b>
-                <div className="small">{d.note}</div>
-              </div>
-              <Icon name="chev" size={14} />
-            </button>
-          );
-        })}
-      </div>
-      <p className="small center mt14">Demo build: payments are simulated and data stays on this device.</p>
-    </div>
-  );
-}
 
 /* ---------------- Feed ---------------- */
 export function Feed() {
@@ -428,7 +357,7 @@ export function OfflineBanner() {
 
 /* ---------------- Me / account ---------------- */
 export function Me() {
-  const { user, state, dispatch, go, forcedOffline, setForcedOffline, env } = useApp();
+  const { user, state, dispatch, go, forcedOffline, setForcedOffline, env, auth } = useApp();
   if (!user) return null;
   const verified = user.role === 'client' ? null : user.verification.status;
   return (
@@ -496,7 +425,7 @@ export function Me() {
         </label>
       </div>
       <div className="stack mt14">
-        <button className="btn secondary" onClick={() => dispatch({ type: 'signOut' })}>
+        <button className="btn secondary" onClick={() => auth.signOut()}>
           Sign out / switch account
         </button>
         <button

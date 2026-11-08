@@ -37,7 +37,20 @@ For production, make a second Railway environment with its own Postgres and `APP
 - Phones check `GET /api/state?since=<rev>` every 3 seconds and when the app regains focus, so the other side of a job shows up within a few seconds.
 - If the server refuses a change (a rule was broken, or someone else got there first), the phone shows why and switches to the server's copy.
 
-On the sign-in screen, pick a demo account, or type its phone number and any 6-digit code. Use **Account → Sign out / switch account** to play the other side of a job.
+Create an account with any Nigerian mobile number, or tap **Use a demo account (testing only)**. On staging and locally, the 6-digit code is shown on screen because no SMS provider is connected yet. Use **Account → Sign out / switch account** to play the other side of a job.
+
+## Sign in and sign up
+
+- **Sign in:** phone number, then a 6-digit code. Codes expire after 10 minutes. After 5 wrong tries a new code is needed, and at most 5 codes can be sent per hour.
+- **Sign up:** choose *I need work done* (client), *I'm an artisan or a team*, or *I'm a market vendor*. Confirm the phone number with a code, then:
+  - **Client:** name, city, area, optional photo.
+  - **Artisan:** photo, individual or construction team (team name and members), trade, jobs taken, years of experience, city and area, about. Then bank details. Then photo verification before bidding.
+  - **Vendor:** shop name, owner, materials sold, market, city and area. Then bank details and agreement to the vendor contract. Then verification before receiving requests.
+- **Bank details:** only the bank name and the last 4 digits are stored.
+- **Sessions:** the server issues a session token after the code is checked. Every action is carried out as the session's user; the user id the phone sends is ignored. Accounts can only be created through the sign-up endpoint, after a code check.
+- **SMS:** set `TERMII_API_KEY` (and optionally `TERMII_SENDER_ID`, `TERMII_BASE_URL`) on Railway to send real texts through Termii. The integration is written but not yet tested against a live Termii account. Without a key, staging shows the code on screen and **production refuses to send codes**.
+- **Demo accounts** (one-tap sign-in) only work when `APP_ENV` is not `production`.
+
 
 | Account | Role | Good for trying |
 | --- | --- | --- |
@@ -96,7 +109,7 @@ public/         Logo, PWA manifest, service worker
 
 With the server running, all testers share one copy of the data in Postgres. No real money moves. Before production:
 
-1. **Auth:** real phone OTP (for example via Termii or Twilio) instead of the demo code. Until then, the server trusts the user id the phone sends, and every phone downloads the whole data set. That's fine for staging with demo accounts, but not for real users.
+1. **SMS and private data:** connect Termii (see above). Every phone still downloads the whole data set, including other people's phone numbers; the server must send each user only what they're allowed to see.
 2. **Database shape:** split the single state row into proper tables (users, jobs, proposals, wallets, ledger) and serve each user only their own data.
 3. **Payments:** hold escrow with a licensed provider such as Paystack or Flutterwave, and send withdrawals through their transfer API.
 4. **Verification:** upload photos to object storage and give admins a review queue. NIN lookup could be automated.

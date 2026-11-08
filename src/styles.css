@@ -446,3 +446,33 @@ details summary { cursor: pointer; }
 .stock-row { display: flex; justify-content: space-between; align-items: baseline; gap: 10px; background: #e0f7f4; border-radius: 12px; padding: 8px 12px; margin-bottom: 8px; font-size: 13px; }
 .stock-row span { font-weight: 800; white-space: nowrap; }
 .lock-note { background: var(--grey-soft); border-radius: 12px; padding: 10px 12px; }
+
+/* ---------- v4: sign in & sign up ---------- */
+.signin-hero.small { margin: 4px 0 12px; }
+.signin-hero.small .signin-mark { width: 44px; height: 44px; }
+.signin-hero.small h1 { font-size: 26px; }
+.welcome-points { display: grid; gap: 10px; background: #fff; border: 1px solid var(--line); border-radius: 16px; padding: 14px; }
+.welcome-points div { display: flex; gap: 10px; align-items: center; font-size: 13.5px; font-weight: 600; }
+.welcome-points .ic-shield, .welcome-points .ic-wallet, .welcome-points .ic-cal { color: var(--teal); }
+.center-block { display: block; margin-left: auto; margin-right: auto; }
+.phone-in { display: flex; align-items: center; border: 1px solid var(--input); border-radius: 12px; background: #fff; overflow: hidden; }
+.phone-in span { padding: 0 10px 0 12px; font-weight: 700; font-size: 14px; border-right: 1px solid var(--line); white-space: nowrap; }
+.phone-in input { border: 0 !important; border-radius: 0 !important; }
+.code-in { font-size: 28px !important; letter-spacing: .5em; text-align: center; font-weight: 800; font-variant-numeric: tabular-nums; }
+.demo-code { display: flex; justify-content: space-between; align-items: center; gap: 10px; background: var(--warn-soft); border: 1px dashed var(--warn); border-radius: 12px; padding: 10px 12px; margin-bottom: 12px; font-size: 12px; color: var(--warn-ink); }
+.demo-code b { font-size: 18px; letter-spacing: .15em; color: var(--ink); }
+.role-card { display: grid; grid-template-columns: 48px minmax(0, 1fr) 14px; gap: 12px; align-items: center; padding: 14px; }
+.role-card b { display: block; font-size: 15px; }
+.role-card small { font-size: 12px; color: var(--muted); }
+.role-ic { width: 48px; height: 48px; border-radius: 14px; display: grid; place-items: center; }
+.role-ic.client { background: var(--brand-soft); color: var(--midnight); }
+.role-ic.artisan { background: var(--warn-soft); color: var(--warn); }
+.role-ic.vendor { background: #e0f7f4; color: var(--good); }
+.photo-row { display: flex; gap: 14px; align-items: center; margin: 4px 0 6px; }
+.avatar-in { width: 72px; height: 72px; border-radius: 50%; border: 1.5px dashed #9aa1ae; display: grid; place-items: center; color: var(--muted); overflow: hidden; flex: none; background: #fff; }
+.avatar-in.done { border: 0; }
+.cat-pick { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.cat-pick button { display: flex; align-items: center; gap: 8px; border: 1.5px solid var(--line); background: #fff; border-radius: 12px; padding: 8px; font: 600 12px var(--ui); color: var(--ink); cursor: pointer; text-align: left; }
+.cat-pick button.on { border-color: var(--midnight); box-shadow: inset 0 0 0 1px var(--midnight); }
+.cat-pick .cat-ic { width: 32px; height: 32px; border-radius: 10px; }
+.cat-pick .cat-ic svg { width: 16px; height: 16px; }

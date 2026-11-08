@@ -1,6 +1,13 @@
-import type { AppState, Apprentice, Artisan, Category, City, ImageRef, Job, QuoteLine, StockItem, Tier, TxnKind, User, Vendor } from './types';
+import type { AppState, Apprentice, Artisan, BankDetails, Category, City, Client, ImageRef, Job, QuoteLine, StockItem, Tier, TxnKind, User, Vendor } from './types';
 import {
+  CITIES,
   MIN_DESCRIPTION,
+  TRADES,
+  avatarFor,
+  displayPhone,
+  maskBank,
+  normalizePhone,
+  validAccountNumber,
   NO_SHOW_STARS,
   addRating,
   artisanQualifies,
@@ -39,8 +46,29 @@ export type JobDraft = {
 
 export type BidDraft = { lines: QuoteLine[]; serviceFee: number; day: string; message: string };
 
+/** Everything a new account fills in. The phone number comes from the verified code, never from this form. */
+export type SignupProfile =
+  | { role: 'client'; name: string; city: City; area: string; photo?: ImageRef }
+  | {
+      role: 'artisan';
+      name: string;
+      city: City;
+      area: string;
+      photo?: ImageRef;
+      kind: 'individual' | 'team';
+      teamName: string;
+      teamMembers: string[];
+      trade: string;
+      categories: Category[];
+      years: number;
+      bio: string;
+      bank: BankDetails;
+    }
+  | { role: 'vendor'; name: string; ownerName: string; market: string; city: City; area: string; photo?: ImageRef; categories: Category[]; bank: BankDetails };
+
 export type Action =
   | { type: 'signIn'; userId: string }
+  | { type: 'registerUser'; phone: string; profile: SignupProfile }
   | { type: 'signOut' }
   | { type: 'reset' }
   | { type: 'toggleFavourite'; artisanId: string }
@@ -80,6 +108,8 @@ export type Action =
 
 /** Actions that only change this device's session and never go to the server. */
 export const LOCAL_ONLY_ACTIONS: Action['type'][] = ['signIn', 'signOut'];
+/** Only the server's sign-up endpoint may create accounts, after checking the phone code. */
+export const AUTH_ONLY_ACTIONS: Action['type'][] = ['registerUser'];
 /** Testing shortcuts the production server refuses. */
 export const DEMO_ONLY_ACTIONS: Action['type'][] = ['reset', 'demoStartDay', 'supervisorApprove', 'approveVerification'];
 
@@ -137,7 +167,8 @@ export function reduce(prev: AppState, action: Action, now = Date.now(), nonce?:
   };
   const artisansFor = (j: Job) =>
     Object.values(s.users).filter((u): u is Artisan => u.role === 'artisan' && artisanQualifies(u, j) && !j.noShows.some((x) => x.artisanId === u.id));
-  const vendorsIn = (city: City) => Object.values(s.users).filter((u): u is Vendor => u.role === 'vendor' && u.city === city && u.verification.status === 'verified');
+  /** Verified vendors in the job's city who sell that kind of material. */
+  const vendorsFor = (j: Job) => Object.values(s.users).filter((u): u is Vendor => u.role === 'vendor' && vendorServes(u, j));
   const refundEscrow = (j: Job, label: string) => {
     credit(j.clientId, j.escrow, label);
     j.escrow = 0;
@@ -151,6 +182,52 @@ export function reduce(prev: AppState, action: Action, now = Date.now(), nonce?:
     case 'signOut':
       s.sessionUserId = null;
       break;
+    case 'registerUser': {
+      const phone = normalizePhone(action.phone) || fail('Enter a valid Nigerian mobile number.');
+      if (Object.values(s.users).some((u) => normalizePhone(u.phone) === phone)) fail('This number already has an Allyfe account. Sign in instead.');
+      const p = action.profile;
+      const name = p.name.trim().replace(/\s+/g, ' ');
+      if (name.length < 3) fail(p.role === 'vendor' ? "Enter your shop's name." : 'Enter your full name.');
+      if (!CITIES.includes(p.city)) fail('Choose your city.');
+      if (!p.area.trim()) fail('Enter your area or estate, e.g. GRA Phase 2.');
+      const base = { name, phone: displayPhone(phone), city: p.city, area: `${p.area.trim()}, ${p.city}`, avatar: avatarFor(name, p.photo) };
+      const checkBank = (b: BankDetails) => {
+        if (!b.bankName) fail('Choose your bank.');
+        if (!validAccountNumber(b.accountNumber)) fail('Account numbers are 10 digits.');
+        if (b.accountName.trim().length < 3) fail('Enter the name on the bank account.');
+        return maskBank(b.bankName, b.accountNumber);
+      };
+      const none = { status: 'none' as const, files: {} };
+      let user: User;
+      if (p.role === 'client') {
+        user = { id: 'c-' + id('u'), role: 'client', ...base, bank: '' } satisfies Client;
+      } else if (p.role === 'artisan') {
+        if (!TRADES.some((t) => t.trade === p.trade) && !p.trade.trim()) fail('Choose your trade.');
+        if (!p.categories.length) fail('Choose at least one kind of job you take.');
+        if (!(p.years >= 0 && p.years <= 60)) fail('Enter your years of experience.');
+        const members = p.teamMembers.map((m) => m.trim()).filter(Boolean);
+        if (p.kind === 'team' && !p.teamName.trim()) fail('Give your team a name.');
+        if (p.kind === 'team' && members.length < 2) fail('A team needs at least 2 members.');
+        user = {
+          id: 'a-' + id('u'), role: 'artisan', ...base, trade: p.trade.trim(), categories: p.categories, rating: 0, ratingCount: 0, jobsDone: 0,
+          years: Math.round(p.years), bio: p.bio.trim(), work: [], bank: checkBank(p.bank), verification: none,
+          kind: p.kind, teamName: p.kind === 'team' ? p.teamName.trim() : undefined, teamMembers: p.kind === 'team' ? members : [], apprentices: [],
+        } satisfies Artisan;
+      } else {
+        if (!p.market.trim()) fail('Enter the market or street where your shop is.');
+        if (p.ownerName.trim().length < 3) fail("Enter the owner's full name.");
+        if (!p.categories.length) fail('Choose at least one kind of material you sell.');
+        user = {
+          id: 'v-' + id('u'), role: 'vendor', ...base, market: p.market.trim(), ownerName: p.ownerName.trim(), categories: p.categories,
+          bank: checkBank(p.bank), verification: none,
+        } satisfies Vendor;
+      }
+      s.users[user.id] = user;
+      s.wallets[user.id] = 0;
+      s.sessionUserId = user.id;
+      alert(user.id, user.role === 'client' ? 'Welcome to Allyfe! Post your first job to get quotations.' : 'Welcome to Allyfe! Verify your account so you can start getting work.');
+      break;
+    }
     case 'toggleFavourite': {
       const u = me();
       const fav = (s.favourites[u.id] ??= []);
@@ -259,7 +336,7 @@ export function reduce(prev: AppState, action: Action, now = Date.now(), nonce?:
       if (charge.billable.length) {
         j.materialsOrder = { id: id('o'), lines: charge.billable, total: charge.materials, status: 'open', at: now, rejections: [] };
         j.status = 'awarded';
-        vendorsIn(j.city).forEach((v) => alert(v.id, `New materials request in ${j.city}: ${formatNaira(charge.materials)} for “${j.title}”.`, j.id));
+        vendorsFor(j).forEach((v) => alert(v.id, `New materials request in ${j.city}: ${formatNaira(charge.materials)} for “${j.title}”.`, j.id));
         alert(b.artisanId, `${c.name} accepted your bid for “${j.title}”. A vendor will deliver the materials; you start on ${b.day}.`, j.id);
       } else {
         j.materialsOrder = undefined;
@@ -278,13 +355,14 @@ export function reduce(prev: AppState, action: Action, now = Date.now(), nonce?:
       const o = j.materialsOrder!;
       if (v.verification.status !== 'verified') fail('Finish verification before taking orders.');
       if (v.city !== j.city) fail(`This order is in ${j.city}. You supply ${v.city}.`);
+      if (!v.categories.includes(j.category)) fail(`You don't sell ${j.category.toLowerCase()} materials. Add it to your profile first.`);
       if (o.status !== 'open') fail('Another vendor has already taken this order.');
       o.status = 'accepted';
       o.vendorId = v.id;
       log(j, `${v.name} is supplying the materials`, v.name);
       alert(j.clientId, `${v.name} will deliver the materials for “${j.title}” to your home.`, j.id);
       alert(j.artisanId!, `${v.name} is supplying the materials for “${j.title}”.`, j.id);
-      vendorsIn(j.city).filter((x) => x.id !== v.id).forEach((x) => alert(x.id, `The materials request for “${j.title}” was taken by another vendor.`, j.id));
+      vendorsFor(j).filter((x) => x.id !== v.id).forEach((x) => alert(x.id, `The materials request for “${j.title}” was taken by another vendor.`, j.id));
       break;
     }
     case 'vendorDispatch': {
@@ -335,7 +413,7 @@ export function reduce(prev: AppState, action: Action, now = Date.now(), nonce?:
       log(j, `Materials not accepted: ${action.reason}`, c.name);
       alert(v.id, `${c.name} did NOT accept the materials for “${j.title}”: ${action.reason}${action.note.trim() ? ` (“${action.note.trim()}”)` : ''}. Under your vendor contract, go back and collect them from ${j.addr}. You will not be paid for this delivery.`, j.id);
       alert(j.artisanId!, `${c.name} refused the materials for “${j.title}” (${action.reason}). A vendor will deliver them again before you start.`, j.id);
-      vendorsIn(j.city).forEach((x) => alert(x.id, `Materials request reopened in ${j.city}: ${formatNaira(o.total)} for “${j.title}”.`, j.id));
+      vendorsFor(j).forEach((x) => alert(x.id, `Materials request reopened in ${j.city}: ${formatNaira(o.total)} for “${j.title}”.`, j.id));
       break;
     }
     case 'vendorPickedUp': {
@@ -600,6 +678,9 @@ export function reduce(prev: AppState, action: Action, now = Date.now(), nonce?:
 
 /** Wallet that collects Allyfe's company fees. */
 export const ALLYFE_ACCOUNT = 'allyfe';
+
+/** A vendor gets a materials request only if verified, in the same city, and selling that kind of material. */
+export const vendorServes = (v: Vendor, j: Pick<Job, 'city' | 'category'>) => v.verification.status === 'verified' && v.city === j.city && v.categories.includes(j.category);
 
 export const VERIFICATION_ITEMS: Record<'artisan' | 'vendor', { key: string; title: string; hint: string }[]> = {
   artisan: [
