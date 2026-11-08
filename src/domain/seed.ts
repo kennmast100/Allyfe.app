@@ -1,5 +1,5 @@
-import type { AppState, Artisan, Client, Job, Post, User, Vendor } from './types';
-import { dayKey, earliestWorkDay } from './rules';
+import type { Alert, AppState, Artisan, Category, Client, Job, Post, QuoteLine, Txn, User, Vendor } from './types';
+import { MATERIALS, dayKey, earliestWorkDay, linesTotal } from './rules';
 
 export const STATE_VERSION = 3;
 
@@ -62,7 +62,101 @@ export function seedState(now = Date.now()): AppState {
       history: [{ label: 'Job posted', by: 'Ada Nwachukwu', at: posted }], createdAt: posted,
     };
   };
+  /* ---- Vendor journey: one job at each stage, so the Mile 3 demo account shows every step ---- */
+  const line = (cat: Category, key: string, qty: number): QuoteLine => {
+    const m = MATERIALS[cat].find((x) => x.key === key)!;
+    return { key: m.key, name: m.name, unit: m.unit, unitPrice: m.price, qty };
+  };
+  const day = (offset: number) => {
+    const d = new Date(earliestWorkDay(now) + 'T12:00:00');
+    d.setDate(d.getDate() + offset);
+    return dayKey(d);
+  };
+  /** A job whose bid was accepted and paid, with its materials order at the given stage. */
+  const vendorJob = (o: {
+    id: string; ref: string; clientId: string; addr: string; artisanId: string; title: string; desc: string; category: Category; tier: Job['tier'];
+    lines: QuoteLine[]; fee: number; dayOffset: number; ago: number; media: string[];
+    order: 'open' | 'accepted' | 'dispatched' | 'delivered'; vendorId?: string; waybill?: string;
+    rejection?: { vendorId: string; reason: string; note: string };
+  }): Job => {
+    const total = linesTotal(o.lines);
+    const posted = now - o.ago;
+    const sday = day(o.dayOffset);
+    const clientName = clients.find((c) => c.id === o.clientId)!.name;
+    const vendorName = o.vendorId ? vendors.find((v) => v.id === o.vendorId)!.name : '';
+    const history: Job['history'] = [
+      { label: 'Job posted', by: clientName, at: posted },
+      { label: `Accepted ${artisans.find((a) => a.id === o.artisanId)!.name}'s bid · ₦${(total + o.fee).toLocaleString('en-NG')} held by Allyfe`, by: clientName, at: posted + 3 * H },
+    ];
+    if (o.rejection) history.push({ label: `Materials not accepted: ${o.rejection.reason}`, by: clientName, at: now - 2 * H });
+    if (o.order !== 'open') history.push({ label: `${vendorName} is supplying the materials`, by: vendorName, at: posted + 5 * H });
+    if (o.order === 'dispatched' || o.order === 'delivered') history.push({ label: `Materials dispatched · ${o.waybill}`, by: vendorName, at: posted + 9 * H });
+    if (o.order === 'delivered') history.push({ label: 'Client received the materials', by: clientName, at: posted + 12 * H });
+    return {
+      id: o.id, ref: o.ref, clientId: o.clientId, city: 'Port Harcourt', title: o.title, desc: o.desc, addr: o.addr, category: o.category, tier: o.tier,
+      preferredDays: [sday], media: o.media,
+      status: o.order === 'delivered' ? 'ready' : o.order === 'dispatched' ? 'materials_on_the_way' : 'awarded',
+      bids: [{ id: 'b-' + o.id, artisanId: o.artisanId, lines: o.lines, serviceFee: o.fee, day: sday, message: '', status: 'accepted', at: posted + 2 * H }],
+      artisanId: o.artisanId, acceptedBidId: 'b-' + o.id, scheduledDay: sday, serviceFee: o.fee,
+      escrow: o.order === 'delivered' ? o.fee : total + o.fee,
+      materialsOrder: {
+        id: 'o-' + o.id, lines: o.lines, total, status: o.order, vendorId: o.order === 'open' ? undefined : o.vendorId, waybill: o.waybill, at: posted + 3 * H,
+        rejections: o.rejection ? [{ ...o.rejection, at: now - 2 * H }] : [],
+      },
+      deliveredMaterials: o.order === 'delivered' ? o.lines : [],
+      noShows: [], history, createdAt: posted,
+    };
+  };
+  const vendorJobs: Job[] = [
+    // 1. A brand-new request any Port Harcourt vendor can take.
+    vendorJob({
+      id: 'j-v1', ref: 'PH-4131', clientId: 'c-ada', addr: '7 Ikwerre Road, D-Line', artisanId: 'a-chidi', title: 'Rewire kitchen sockets and lights', category: 'Electrical', tier: 'Pro',
+      desc: 'Four double sockets and three ceiling lights in the kitchen need new cabling. Breaker trips when the kettle is on. Conduit is already in the wall.',
+      lines: [line('Electrical', 'el-cab25', 1), line('Electrical', 'el-socket', 4), line('Electrical', 'el-down', 3), line('Electrical', 'el-mcb', 2)], fee: 35000, dayOffset: 1, ago: 5 * H, media: ['solar'], order: 'open',
+    }),
+    // 2. Mile 3 accepted it and now has to buy and send the materials.
+    vendorJob({
+      id: 'j-v2', ref: 'PH-4127', clientId: 'c-ada', addr: '7 Ikwerre Road, D-Line', artisanId: 'a-tunde', title: 'Retile guest bathroom floor', category: 'Home Renovation', tier: 'Basic',
+      desc: 'Guest bathroom floor is 2.5 m by 2 m. Remove old cracked tiles and lay new 60×60 grey floor tiles. Drain must stay where it is.',
+      lines: [line('Home Renovation', 'hr-tiles', 6), line('Home Renovation', 'hr-adhes', 3), line('Home Renovation', 'hr-grout', 2), line('Home Renovation', 'hr-cement', 1)], fee: 40000, dayOffset: 1, ago: 20 * H, media: ['tiles'],
+      order: 'accepted', vendorId: 'v-mile3',
+    }),
+    // 3. Sent by Mile 3; waiting for Kenneth to confirm (or refuse) the delivery.
+    vendorJob({
+      id: 'j-v3', ref: 'PH-4125', clientId: 'c-kenneth', addr: '12 Woji Road, GRA Phase 2', artisanId: 'a-blessing', title: 'Repaint living room and dining', category: 'Painting', tier: 'Pro',
+      desc: 'Living and dining area, about 60 m² of wall, 3 m high. Light peeling near the window. Colour: soft green walls with white trim.',
+      lines: [line('Painting', 'pa-emul', 2), line('Painting', 'pa-gloss', 1), line('Painting', 'pa-putty', 1), line('Painting', 'pa-roller', 2), line('Painting', 'pa-mask', 3)], fee: 60000, dayOffset: 0, ago: 30 * H, media: ['room'],
+      order: 'dispatched', vendorId: 'v-mile3', waybill: 'Rider Chuks · 0803 555 0303 · arriving this afternoon',
+    }),
+    // 4. Delivered and paid: the money is in Mile 3's wallet.
+    vendorJob({
+      id: 'j-v4', ref: 'PH-4119', clientId: 'c-ada', addr: '7 Ikwerre Road, D-Line', artisanId: 'a-emeka', title: 'Kitchen wall units', category: 'Home Renovation', tier: 'Pro',
+      desc: 'Build and fit 3 wall units above the worktop, 2.4 m in total, MDF with soft-close doors. Walls are concrete.',
+      lines: [line('Home Renovation', 'hr-mdf', 3), line('Home Renovation', 'hr-hinge', 6), line('Home Renovation', 'hr-handle', 3), line('Home Renovation', 'hr-screws', 1)], fee: 70000, dayOffset: 2, ago: 3 * D, media: ['cabinet'],
+      order: 'delivered', vendorId: 'v-mile3', waybill: 'GIG waybill 7712',
+    }),
+    // 5. Kenneth refused Mile 3's delivery: Mile 3 must collect it, and the order is open again.
+    vendorJob({
+      id: 'j-v5', ref: 'PH-4129', clientId: 'c-kenneth', addr: '12 Woji Road, GRA Phase 2', artisanId: 'a-ibrahim', title: 'Replace upstairs WC fittings', category: 'Plumbing', tier: 'Basic',
+      desc: 'Upstairs toilet cistern keeps running and the flush handle is broken. Replace the full cistern fittings set and the angle valve.',
+      lines: [line('Plumbing', 'pl-wc', 1), line('Plumbing', 'pl-ball', 1), line('Plumbing', 'pl-ptfe', 2)], fee: 15000, dayOffset: 1, ago: 26 * H, media: ['tiles'],
+      order: 'open', rejection: { vendorId: 'v-mile3', reason: 'Wrong item or brand', note: 'Fittings are for a low-level cistern; mine is close-coupled.' },
+    }),
+  ];
+  const mile3Paid = linesTotal(vendorJobs[3].materialsOrder!.lines);
+  const vendorTxns: Txn[] = [
+    { id: 'xv1', label: 'Materials · Kitchen wall units', amount: mile3Paid, kind: 'in', at: now - 2 * D },
+    { id: 'xv2', label: 'Materials · Bathroom tiles for Eliozu job', amount: 64500, kind: 'in', at: now - 9 * D },
+    { id: 'xv3', label: 'Withdrawal to UBA •••• 1414', amount: 60000, kind: 'out', at: now - 8 * D },
+  ];
+  const mile3Alerts: Alert[] = [
+    { id: 'av1', text: `New materials request in Port Harcourt: ₦${linesTotal(vendorJobs[0].materialsOrder!.lines).toLocaleString('en-NG')} for “Rewire kitchen sockets and lights”.`, at: now - 4 * H, read: false, jobId: 'j-v1' },
+    { id: 'av2', text: 'Kenneth Obi did NOT accept the materials for “Replace upstairs WC fittings”: Wrong item or brand. Under your vendor contract, go back and collect them from 12 Woji Road, GRA Phase 2.', at: now - 2 * H, read: false, jobId: 'j-v5' },
+    { id: 'av3', text: `Ada Nwachukwu received the materials. ₦${mile3Paid.toLocaleString('en-NG')} is in your wallet.`, at: now - 2 * D, read: true, jobId: 'j-v4' },
+  ];
+
   const jobs: Job[] = [
+    ...vendorJobs,
     openJob('j-seed1', 'PH-4120', 'Kitchen cabinet installation', 'Fit 6 base units and 4 wall units in a new kitchen. Units are bought but not assembled; they need assembly, levelling and fixing to concrete walls. Space is 3.4 m wide.', 'Home Renovation', 'Pro', 2 * H, ['cabinet']),
     openJob('j-seed2', 'PH-4121', 'POP ceiling with 8 downlights', 'POP ceiling for a 6 m by 5 m living room with 8 recessed downlights. Wiring points are already in place. Ceiling height is 3 m. Old ceiling boards must be removed first.', 'Interior Design', 'Premium', 5 * H, ['ceiling']),
     openJob('j-seed3', 'PH-4122', 'Built-in wardrobes for 2 bedrooms', 'Two built-in wardrobes, each 2.4 m wide and 2.4 m high, with sliding doors, one hanging rail and four shelves each. Walls are plastered concrete.', 'Home Renovation', 'Basic', 7 * H, ['wardrobe']),
@@ -95,15 +189,16 @@ export function seedState(now = Date.now()): AppState {
     users,
     jobs,
     posts,
-    wallets: { 'c-kenneth': 400000, 'c-ada': 300000, 'a-emeka': 86500, 'a-chidi': 42000, 'a-ibrahim': 61000, 'a-blessing': 23000, 'a-tunde': 9000, 'a-grace': 0, 'a-chinedu': 12000, 'a-david': 18000, 'a-femi': 30000, 'v-mile3': 0, 'v-oilmill': 0, 'v-tradefair': 0 },
+    wallets: { 'c-kenneth': 400000, 'c-ada': 300000, 'a-emeka': 86500, 'a-chidi': 42000, 'a-ibrahim': 61000, 'a-blessing': 23000, 'a-tunde': 9000, 'a-grace': 0, 'a-chinedu': 12000, 'a-david': 18000, 'a-femi': 30000, 'v-mile3': mile3Paid + 64500 - 60000, 'v-oilmill': 0, 'v-tradefair': 0 },
     txns: {
       'c-kenneth': [{ id: 'x1', label: 'Top-up from GTBank', amount: 400000, kind: 'in', at: now - 5 * D }],
+      'v-mile3': vendorTxns,
       'a-emeka': [
         { id: 'x2', label: 'Payment · Wardrobe for Mrs Ada', amount: 180000, kind: 'in', at: now - 10 * D },
         { id: 'x3', label: 'Withdrawal to Access Bank', amount: 120000, kind: 'out', at: now - 9 * D },
       ],
     },
-    alerts: {},
+    alerts: { 'v-mile3': mile3Alerts },
     favourites: {},
     seq: 1,
   };
@@ -119,6 +214,6 @@ export const DEMO_ACCOUNTS: { id: string; note: string }[] = [
   { id: 'a-tunde', note: 'Artisan · construction team of 4' },
   { id: 'a-chinedu', note: 'Artisan · former apprentice of Emeka' },
   { id: 'a-grace', note: 'Artisan · verification not finished' },
-  { id: 'v-mile3', note: 'Market vendor · Mile 3, Port Harcourt' },
+  { id: 'v-mile3', note: 'Market vendor · orders at every stage' },
   { id: 'v-oilmill', note: 'Market vendor · Oil Mill, Port Harcourt' },
 ];

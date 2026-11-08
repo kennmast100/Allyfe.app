@@ -48,7 +48,8 @@ On the sign-in screen, pick a demo account, or type its phone number and any 6-d
 | Ibrahim Sani, David Johnson | Artisans (plumbers) | Quotations, start day, no-show replacement |
 | Tunde Bakare | Construction team of 4 | Team profile |
 | Chinedu Okafor | Artisan, ex-apprentice | Collaborated projects |
-| Mile 3 / Oil Mill vendors | Market vendors | Accepting and delivering materials |
+| Mile 3 Building Supplies | Market vendor | Full vendor journey: starts with a new request, an order to send, one awaiting the client, one delivered and paid, and a refused delivery to collect |
+| Oil Mill Electricals & Plumbing | Market vendor | Taking new requests |
 
 ## What's in it
 

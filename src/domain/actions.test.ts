@@ -251,6 +251,34 @@ describe('no-shows', () => {
   });
 });
 
+describe('vendor demo data', () => {
+  it('gives Mile 3 an order at every stage, with consistent money', () => {
+    const s = seedState(T0);
+    const mine = s.jobs.filter((j) => j.materialsOrder);
+    const stage = (id: string) => mine.find((j) => j.id === id)!;
+    expect(stage('j-v1')).toMatchObject({ status: 'awarded', materialsOrder: { status: 'open' } });
+    expect(stage('j-v2')).toMatchObject({ status: 'awarded', materialsOrder: { status: 'accepted', vendorId: 'v-mile3' } });
+    expect(stage('j-v3')).toMatchObject({ status: 'materials_on_the_way', materialsOrder: { status: 'dispatched', vendorId: 'v-mile3' } });
+    expect(stage('j-v4')).toMatchObject({ status: 'ready', escrow: 70000, materialsOrder: { status: 'delivered' } });
+    expect(stage('j-v5').materialsOrder!.rejections[0]).toMatchObject({ vendorId: 'v-mile3' });
+    for (const j of mine) {
+      const held = j.materialsOrder!.status === 'delivered' ? j.serviceFee! : j.materialsOrder!.total + j.serviceFee!;
+      expect(j.escrow).toBe(held);
+    }
+  });
+
+  it('lets the demo journey continue: dispatch, refuse, collect and confirm', () => {
+    at(T0);
+    let s = as(seedState(T0), 'v-mile3', { type: 'vendorDispatch', jobId: 'j-v2', waybill: 'Rider Chuks' }, { type: 'vendorPickedUp', jobId: 'j-v5' });
+    expect(s.jobs.find((j) => j.id === 'j-v2')!.status).toBe('materials_on_the_way');
+    const before = s.wallets['v-mile3'];
+    s = as(s, 'c-kenneth', { type: 'confirmMaterials', jobId: 'j-v3' });
+    expect(s.wallets['v-mile3']).toBe(before + s.jobs.find((j) => j.id === 'j-v3')!.materialsOrder!.total);
+    s = as(s, 'v-oilmill', { type: 'vendorAcceptOrder', jobId: 'j-v1' });
+    expect(s.jobs.find((j) => j.id === 'j-v1')!.materialsOrder!.vendorId).toBe('v-oilmill');
+  });
+});
+
 describe('profiles', () => {
   it('lets an artisan work as a team and keep apprentices', () => {
     let s = as(seedState(T0), 'a-emeka', { type: 'updateProfile', kind: 'team', teamName: 'Uche Woodworks', teamMembers: ['Emeka Uche', 'Obinna'], bio: '' });
@@ -294,9 +322,10 @@ describe('refusing materials', () => {
     expect(s.jobs[0].materialsOrder!.rejections[0].pickedUpAt).toBeDefined();
     expect(() => as(s, 'v-oilmill', { type: 'vendorPickedUp', jobId: job.id })).toThrow(/nothing to collect/);
     // Another vendor supplies it properly and is paid on receipt.
+    const mile3Before = s.wallets['v-mile3'];
     s = as(s, 'v-mile3', { type: 'vendorAcceptOrder', jobId: job.id }, { type: 'vendorDispatch', jobId: job.id, waybill: 'GIG 4471' });
     s = as(s, 'c-kenneth', { type: 'confirmMaterials', jobId: job.id });
-    expect(s.wallets['v-mile3']).toBe(28100);
+    expect(s.wallets['v-mile3']).toBe(mile3Before + 28100);
   });
 });
 
