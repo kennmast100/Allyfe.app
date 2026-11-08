@@ -8,6 +8,7 @@ import { fileStorage, postgresStorage } from './storage';
 import { DEMO_ACCOUNTS } from '../src/domain/seed';
 import { normalizePhone } from '../src/domain/rules';
 import type { SignupProfile } from '../src/domain/actions';
+import { viewFor } from '../src/domain/view';
 
 const PORT = Number(process.env.PORT) || 3000;
 const APP_ENV = process.env.APP_ENV || 'local';
@@ -85,7 +86,9 @@ const server = createServer(async (req, res) => {
         res.writeHead(204, { 'cache-control': 'no-store' });
         return res.end();
       }
-      return send(res, 200, { rev, env: APP_ENV, state });
+      // Each person gets only what they're allowed to see.
+      const userId = auth.userFor(bearer(req));
+      return send(res, 200, { rev, env: APP_ENV, state: viewFor(state, userId && state.users[userId] ? userId : null) });
     }
     if (req.method === 'POST' && url.pathname.startsWith('/api/')) {
       let body: Record<string, unknown>;
@@ -102,7 +105,8 @@ const server = createServer(async (req, res) => {
           const isReset = (body.action as { type?: string })?.type === 'reset';
           if (!isReset && (!userId || !users()[userId])) return send(res, 401, { error: 'Please sign in again.', signedOut: true });
           const r = await core.apply({ ...(body as Parameters<typeof core.apply>[0]), userId: userId ?? '' });
-          return r.ok ? send(res, 200, { rev: r.rev, state: r.state }) : send(res, r.status, { error: r.error, rev: r.rev, state: r.state });
+          const view = viewFor(r.state, userId && r.state.users[userId] ? userId : null);
+          return r.ok ? send(res, 200, { rev: r.rev, state: view }) : send(res, r.status, { error: r.error, rev: r.rev, state: view });
         }
         case '/api/auth/start': {
           const r = await auth.start(String(body.phone ?? ''), body.purpose === 'signup' ? 'signup' : 'signin', (p) => !!userIdForPhone(p));
@@ -118,7 +122,7 @@ const server = createServer(async (req, res) => {
           const r = await core.register(phone, body.profile as SignupProfile, nonce());
           if (!r.ok) return send(res, r.status, { error: r.error });
           const userId = (r as { userId: string }).userId;
-          return send(res, 200, { token: await auth.issue(userId), userId, rev: r.rev, state: r.state });
+          return send(res, 200, { token: await auth.issue(userId), userId, rev: r.rev, state: viewFor(r.state, userId) });
         }
         case '/api/auth/signout':
           await auth.revoke(bearer(req));

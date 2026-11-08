@@ -41,6 +41,8 @@ export type Artisan = BaseUser & {
   teamName?: string;
   teamMembers: string[];
   apprentices: Apprentice[];
+  /** Artisans this one trained under. Filled in by the server, which keeps apprentices' numbers private. */
+  mentors?: string[];
 };
 /** Market vendor: supplies the materials in an accepted quotation and delivers them to the client. */
 export type Vendor = BaseUser & { role: 'vendor'; bank: string; verification: Verification; market: string; ownerName: string; categories: Category[] };

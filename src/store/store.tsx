@@ -156,7 +156,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     const sv = server.current;
     if (!sv || sv.pending) return;
     try {
-      const r = await fetch(`/api/state?since=${sv.rev}`, { cache: 'no-store' });
+      const r = await fetch(`/api/state?since=${sv.rev}`, { cache: 'no-store', headers: token.current ? { authorization: `Bearer ${token.current}` } : {} });
       if (r.status === 200 && !sv.pending) {
         const body = (await r.json()) as { rev: number; state: AppState };
         adopt(body.state, body.rev);
@@ -184,6 +184,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
           setState({ ...stateRef.current, sessionUserId: null });
           setStack([{ name: 'home' }]);
           toast('Please sign in again.');
+          void refresh(null);
           return;
         }
         if (res.error) toast(res.error);
@@ -201,26 +202,25 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   // Find out whether a server is running. If not, the app keeps working on this device only.
   useEffect(() => {
     let alive = true;
-    fetch('/api/state', { cache: 'no-store' })
-      .then((r) => (r.ok ? r.json() : Promise.reject()))
-      .then(async (body: { rev: number; env: string; state: AppState }) => {
-        if (!alive || !body?.state) return;
-        server.current = { rev: body.rev, pending: 0 };
-        setEnv(body.env || 'server');
-        // With a server, only a valid session signs you in, never a cached user id.
-        let userId: string | null = null;
-        if (token.current) {
-          const me = await fetch('/api/auth/me', { headers: { authorization: `Bearer ${token.current}` } }).catch(() => null);
-          if (me?.ok) userId = ((await me.json()) as { userId: string }).userId;
-          else if (me?.status === 401) {
-            token.current = null;
-            writeToken(null);
-          }
+    (async () => {
+      // With a server, only a valid session signs you in, never a cached user id.
+      let userId: string | null = null;
+      if (token.current) {
+        const me = await fetch('/api/auth/me', { headers: { authorization: `Bearer ${token.current}` } }).catch(() => null);
+        if (me?.ok) userId = ((await me.json()) as { userId: string }).userId;
+        else if (me?.status === 401) {
+          token.current = null;
+          writeToken(null);
         }
-        if (!alive) return;
-        if (server.current) server.current.rev = body.rev;
-        setState({ ...body.state, sessionUserId: userId && body.state.users[userId] ? userId : null });
-      })
+      }
+      const r = await fetch('/api/state', { cache: 'no-store', headers: token.current ? { authorization: `Bearer ${token.current}` } : {} });
+      if (!r.ok) throw new Error('no server');
+      const body = (await r.json()) as { rev: number; env: string; state: AppState };
+      if (!alive || !body?.state) return;
+      server.current = { rev: body.rev, pending: 0 };
+      setEnv(body.env || 'server');
+      setState({ ...body.state, sessionUserId: userId && body.state.users[userId] ? userId : null });
+    })()
       .catch(() => {});
     return () => {
       alive = false;
@@ -274,18 +274,33 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       return { error: "Couldn't reach Allyfe. Check your connection and try again." };
     }
   };
+  /** Loads this person's own view of the data from the server. */
+  const refresh = useCallback(
+    async (userId: string | null) => {
+      try {
+        const r = await fetch('/api/state', { cache: 'no-store', headers: token.current ? { authorization: `Bearer ${token.current}` } : {} });
+        const body = (await r.json()) as { rev: number; state: AppState };
+        if (server.current) server.current.rev = body.rev;
+        setState({ ...body.state, sessionUserId: userId && body.state.users[userId] ? userId : null });
+      } catch {
+        /* the next poll will catch up */
+      }
+    },
+    [setState],
+  );
   const signedIn = useCallback(
-    (userId: string, newToken?: string, fresh?: { rev: number; state: AppState }) => {
+    async (userId: string, newToken?: string, fresh?: { rev: number; state: AppState }) => {
       if (newToken) {
         token.current = newToken;
         writeToken(newToken);
       }
+      setStack([{ name: 'home' }]);
+      if (server.current && !fresh) return refresh(userId);
       if (fresh && server.current) server.current.rev = fresh.rev;
       const base = fresh?.state ?? stateRef.current;
       setState({ ...base, sessionUserId: userId });
-      setStack([{ name: 'home' }]);
     },
-    [setState],
+    [setState, refresh],
   );
   const auth = useMemo<AuthApi>(
     () => ({
@@ -310,7 +325,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
           const r = await post('/api/auth/verify', { phone, code });
           if (r.error) return { ok: false, error: r.error };
           if (r.token) {
-            signedIn(r.userId as string, r.token as string);
+            await signedIn(r.userId as string, r.token as string);
             return { ok: true, signedIn: true };
           }
           return { ok: true, signedIn: false, ticket: r.ticket as string };
@@ -329,7 +344,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         if (server.current) {
           const r = await post('/api/auth/register', { ticket, profile });
           if (r.error) return { ok: false, error: r.error };
-          signedIn(r.userId as string, r.token as string, { rev: r.rev as number, state: r.state as AppState });
+          await signedIn(r.userId as string, r.token as string, { rev: r.rev as number, state: r.state as AppState });
           return { ok: true };
         }
         try {
@@ -345,7 +360,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         if (server.current) {
           const r = await post('/api/auth/demo', { userId });
           if (r.error) return { ok: false, error: r.error };
-          signedIn(userId, r.token as string);
+          await signedIn(userId, r.token as string);
           return { ok: true };
         }
         signedIn(userId);
@@ -357,10 +372,12 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         writeToken(null);
         setState({ ...stateRef.current, sessionUserId: null });
         setStack([{ name: 'home' }]);
+        // Drop this person's private data from the phone; keep only the public view.
+        if (server.current) void refresh(null);
       },
     }),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [online, signedIn, setState],
+    [online, signedIn, setState, refresh],
   );
 
   const go = useCallback((r: Route) => {

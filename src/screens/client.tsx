@@ -3,6 +3,7 @@ import { Avatar, CategoryIcon, HouseArt, Icon, Picture } from '../components/art
 import { BackBar, Calendar, Empty, Journey, MediaInput, Notice, PersonRow, SimButton, Stars, StatusTag, TopBar, VTick, dayLabel, timeAgo } from '../components/ui';
 import { isVideo } from '../components/media';
 import type { JobDraft } from '../domain/actions';
+import { mentorsOf } from '../domain/view';
 import {
   ATTITUDE_OPTIONS,
   CATEGORIES,
@@ -198,9 +199,8 @@ export function ProProfile({ id }: { id: string }) {
   const fav = (state.favourites[user!.id] ?? []).includes(id);
   const reviews = state.jobs.filter((j) => j.artisanId === id && j.rating).slice(0, 3);
   const gallery = [...new Set([...state.posts.filter((x) => x.authorId === id).map((x) => x.image), ...p.work])].slice(0, 6);
-  const digits = (x: string) => x.replace(/\D/g, '');
   // If this artisan trained under someone on Allyfe, show that master's work as collaborated projects.
-  const masters = Object.values(state.users).filter((u): u is Artisan => u.role === 'artisan' && u.apprentices.some((a) => digits(a.phone) === digits(p.phone)));
+  const masters = (p.mentors ?? mentorsOf(state, p)).map((id) => state.users[id] as Artisan).filter(Boolean);
   return (
     <>
       <BackBar />

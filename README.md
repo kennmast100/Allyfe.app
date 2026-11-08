@@ -50,6 +50,7 @@ Create an account with any Nigerian mobile number, or tap **Use a demo account (
 - **Sessions:** the server issues a session token after the code is checked. Every action is carried out as the session's user; the user id the phone sends is ignored. Accounts can only be created through the sign-up endpoint, after a code check.
 - **SMS:** set `TERMII_API_KEY` (and optionally `TERMII_SENDER_ID`, `TERMII_BASE_URL`) on Railway to send real texts through Termii. The integration is written but not yet tested against a live Termii account. Without a key, staging shows the code on screen and **production refuses to send codes**.
 - **Demo accounts** (one-tap sign-in) only work when `APP_ENV` is not `production`.
+- **Private data:** each person downloads only their own view (`src/domain/view.ts`). That covers their own wallet, transactions, alerts and bank details, their own jobs and orders, and open jobs or requests they could take. Phone numbers and addresses are included only for people they're working with. Competitors' bids, other people's verification documents and apprentices' numbers never leave the server. Signed-out visitors see public profiles and posts only.
 
 
 | Account | Role | Good for trying |
@@ -109,7 +110,7 @@ public/         Logo, PWA manifest, service worker
 
 With the server running, all testers share one copy of the data in Postgres. No real money moves. Before production:
 
-1. **SMS and private data:** connect Termii (see above). Every phone still downloads the whole data set, including other people's phone numbers; the server must send each user only what they're allowed to see.
+1. **SMS:** connect Termii (see above).
 2. **Database shape:** split the single state row into proper tables (users, jobs, proposals, wallets, ledger) and serve each user only their own data.
 3. **Payments:** hold escrow with a licensed provider such as Paystack or Flutterwave, and send withdrawals through their transfer API.
 4. **Verification:** upload photos to object storage and give admins a review queue. NIN lookup could be automated.
