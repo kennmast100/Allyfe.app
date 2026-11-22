@@ -9,7 +9,7 @@ const post: Action = {
     title: 'Fix sockets',
     desc: 'Three double sockets in the kitchen stopped working after a power surge. The breaker trips when I reset it.',
     addr: '12 Woji Road',
-    category: 'Electrical',
+    category: 'Electrician',
     tier: 'Basic',
     preferredDays: [earliestWorkDay(Date.now())],
     media: [],

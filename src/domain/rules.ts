@@ -1,6 +1,27 @@
-import type { Artisan, Category, City, Job, QuoteLine, Tier } from './types';
+import type { Allocation, Artisan, Category, City, Job, OfferItem, PurchaseOrder, QuoteLine, Supply, SupplyLine, SupplyOffer, Tier } from './types';
 
-export const CATEGORIES: Category[] = ['Home Renovation', 'Interior Design', 'Plumbing', 'Electrical', 'Painting'];
+/**
+ * The 12 main job roles for the first launch. People pick from this short list;
+ * the specialisations give examples and let artisans say what they do best.
+ */
+export const JOB_ROLES: { role: Category; service: string; specialisations: string[] }[] = [
+  { role: 'Plumber', service: 'Plumbing', specialisations: ['Pipe installation', 'Bathroom fittings', 'Water systems', 'Repairs'] },
+  { role: 'Woodworker', service: 'Woodwork', specialisations: ['Furniture making', 'Carpentry', 'Upholstery', 'Kitchen cabinets', 'Wardrobes'] },
+  { role: 'Electrician', service: 'Electrical', specialisations: ['House wiring', 'Lighting', 'Electrical installations', 'Repairs'] },
+  { role: 'Painter', service: 'Painting', specialisations: ['Interior painting', 'Exterior painting', 'Decorative finishes'] },
+  { role: 'Tiler', service: 'Tiling', specialisations: ['Floor tiling', 'Wall tiling', 'Bathroom tiling'] },
+  { role: 'POP Installer', service: 'POP ceilings', specialisations: ['POP ceilings', 'Cornices', 'Ceiling designs'] },
+  { role: 'Welder', service: 'Welding', specialisations: ['Gates', 'Burglary proofs', 'Railings', 'Metal fabrication'] },
+  { role: 'Aluminium Fabricator', service: 'Aluminium work', specialisations: ['Aluminium windows', 'Aluminium doors', 'Partitions'] },
+  { role: 'Glass Installer', service: 'Glass work', specialisations: ['Glass doors', 'Mirrors', 'Shower cubicles', 'Glass partitions'] },
+  { role: 'Cleaner', service: 'Cleaning', specialisations: ['Domestic cleaning', 'Commercial cleaning', 'Post-construction cleaning'] },
+  { role: 'AC Technician', service: 'Air conditioning', specialisations: ['AC installation', 'AC servicing', 'AC repairs'] },
+  { role: 'Builder', service: 'Building', specialisations: ['Building construction', 'Blockwork', 'Renovations'] },
+];
+export const CATEGORIES: Category[] = JOB_ROLES.map((r) => r.role);
+export const roleInfo = (c: Category) => JOB_ROLES.find((r) => r.role === c)!;
+/** "Plumbing", "Woodwork"… for sentences about the kind of work or materials. */
+export const serviceName = (c: Category) => roleInfo(c).service;
 export const CITIES: City[] = ['Port Harcourt', 'Lagos', 'Abuja', 'Aba'];
 export const TIERS: Tier[] = ['Basic', 'Pro', 'Premium'];
 
@@ -83,7 +104,7 @@ export type CatalogItem = { key: string; name: string; unit: string; price: numb
  * artisans quote with; vendors supply at these prices. Review with real market data.
  */
 export const MATERIALS: Record<Category, CatalogItem[]> = {
-  Plumbing: [
+  Plumber: [
     { key: 'pl-pvc12', name: 'PVC pipe ½" (5 m length)', unit: 'length', price: 3500 },
     { key: 'pl-pvc34', name: 'PVC pipe ¾" (5 m length)', unit: 'length', price: 4500 },
     { key: 'pl-elbow', name: 'Elbow ½"', unit: 'piece', price: 300 },
@@ -97,7 +118,20 @@ export const MATERIALS: Record<Category, CatalogItem[]> = {
     { key: 'pl-gum', name: 'PVC solvent cement (gum)', unit: 'tin', price: 1500 },
     { key: 'pl-ptfe', name: 'PTFE thread tape', unit: 'roll', price: 300 },
   ],
-  Electrical: [
+  Woodworker: [
+    { key: 'hr-ply', name: 'Plywood ¾" sheet', unit: 'sheet', price: 22000 },
+    { key: 'hr-mdf', name: 'MDF board 18 mm', unit: 'sheet', price: 25000 },
+    { key: 'wd-hardwood', name: 'Hardwood plank 2"×12" (12 ft)', unit: 'plank', price: 14000 },
+    { key: 'hr-hinge', name: 'Soft-close hinge', unit: 'piece', price: 3500 },
+    { key: 'hr-runner', name: 'Drawer runners (pair)', unit: 'pair', price: 4500 },
+    { key: 'hr-handle', name: 'Cabinet handle', unit: 'piece', price: 1200 },
+    { key: 'hr-glue', name: 'Wood glue (1 L)', unit: 'bottle', price: 2500 },
+    { key: 'hr-screws', name: 'Wood screws (box)', unit: 'box', price: 2000 },
+    { key: 'wd-foam', name: 'Upholstery foam 2" (sheet)', unit: 'sheet', price: 18000 },
+    { key: 'wd-fabric', name: 'Upholstery fabric', unit: 'yard', price: 6500 },
+    { key: 'wd-lacquer', name: 'Wood lacquer (4 L)', unit: 'tin', price: 15000 },
+  ],
+  Electrician: [
     { key: 'el-cab25', name: '2.5 mm² cable (100 m roll)', unit: 'roll', price: 65000 },
     { key: 'el-cab15', name: '1.5 mm² cable (100 m roll)', unit: 'roll', price: 42000 },
     { key: 'el-socket', name: '13A double socket', unit: 'piece', price: 2500 },
@@ -111,39 +145,92 @@ export const MATERIALS: Record<Category, CatalogItem[]> = {
     { key: 'el-jbox', name: 'Junction box', unit: 'piece', price: 300 },
     { key: 'el-tape', name: 'Insulating tape', unit: 'roll', price: 300 },
   ],
-  Painting: [
+  Painter: [
     { key: 'pa-emul', name: 'Emulsion paint (20 L)', unit: 'bucket', price: 35000 },
     { key: 'pa-satin', name: 'Satin paint (20 L)', unit: 'bucket', price: 45000 },
     { key: 'pa-gloss', name: 'Gloss paint (4 L)', unit: 'tin', price: 12000 },
     { key: 'pa-primer', name: 'Primer / sealer (20 L)', unit: 'bucket', price: 25000 },
     { key: 'pa-putty', name: 'Wall putty / filler (20 kg)', unit: 'bag', price: 9000 },
+    { key: 'pa-texture', name: 'Textured finish (20 kg)', unit: 'bucket', price: 38000 },
     { key: 'pa-roller', name: 'Paint roller 9"', unit: 'piece', price: 3500 },
     { key: 'pa-brush', name: 'Paint brush 4"', unit: 'piece', price: 1500 },
     { key: 'pa-sand', name: 'Sandpaper', unit: 'sheet', price: 200 },
     { key: 'pa-mask', name: 'Masking tape', unit: 'roll', price: 800 },
   ],
-  'Home Renovation': [
-    { key: 'hr-ply', name: 'Plywood ¾" sheet', unit: 'sheet', price: 22000 },
-    { key: 'hr-mdf', name: 'MDF board 18 mm', unit: 'sheet', price: 25000 },
-    { key: 'hr-hinge', name: 'Soft-close hinge', unit: 'piece', price: 3500 },
-    { key: 'hr-runner', name: 'Drawer runners (pair)', unit: 'pair', price: 4500 },
-    { key: 'hr-handle', name: 'Cabinet handle', unit: 'piece', price: 1200 },
-    { key: 'hr-glue', name: 'Wood glue (1 L)', unit: 'bottle', price: 2500 },
-    { key: 'hr-screws', name: 'Wood screws (box)', unit: 'box', price: 2000 },
+  Tiler: [
     { key: 'hr-tiles', name: 'Floor tiles 60×60 (carton)', unit: 'carton', price: 9500 },
+    { key: 'ti-wall', name: 'Wall tiles 30×60 (carton)', unit: 'carton', price: 8500 },
     { key: 'hr-adhes', name: 'Tile adhesive (25 kg)', unit: 'bag', price: 7500 },
     { key: 'hr-grout', name: 'Tile grout (2 kg)', unit: 'bag', price: 2500 },
     { key: 'hr-cement', name: 'Cement (50 kg)', unit: 'bag', price: 6500 },
     { key: 'hr-sand', name: 'Sharp sand', unit: 'ton', price: 25000 },
+    { key: 'ti-spacer', name: 'Tile spacers (pack)', unit: 'pack', price: 1000 },
+    { key: 'ti-trim', name: 'Tile edge trim', unit: 'length', price: 1800 },
   ],
-  'Interior Design': [
+  'POP Installer': [
     { key: 'id-pop', name: 'POP cement (bag)', unit: 'bag', price: 4500 },
     { key: 'id-fibre', name: 'POP fibre (bundle)', unit: 'bundle', price: 3000 },
+    { key: 'pop-batten', name: 'Wooden batten 2"×2"', unit: 'length', price: 1500 },
+    { key: 'pop-cornice', name: 'POP cornice mould (3 m)', unit: 'length', price: 4000 },
     { key: 'id-down', name: 'Recessed downlight', unit: 'piece', price: 3500 },
     { key: 'id-strip', name: 'LED strip light (5 m)', unit: 'roll', price: 6000 },
-    { key: 'id-wallpaper', name: 'Wallpaper roll', unit: 'roll', price: 12000 },
-    { key: 'id-rod', name: 'Curtain rod set', unit: 'set', price: 8000 },
-    { key: 'id-emul', name: 'Emulsion paint (20 L)', unit: 'bucket', price: 35000 },
+  ],
+  Welder: [
+    { key: 'we-pipe', name: 'Iron pipe 1" (6 m)', unit: 'length', price: 9500 },
+    { key: 'we-angle', name: 'Angle iron 2" (6 m)', unit: 'length', price: 11000 },
+    { key: 'we-flat', name: 'Flat bar 1" (6 m)', unit: 'length', price: 5500 },
+    { key: 'we-square', name: 'Square pipe 1" (6 m)', unit: 'length', price: 8500 },
+    { key: 'we-sheet', name: 'Iron sheet 1.5 mm (4×8 ft)', unit: 'sheet', price: 45000 },
+    { key: 'we-rod', name: 'Welding electrodes (pack)', unit: 'pack', price: 7000 },
+    { key: 'we-disc', name: 'Cutting disc', unit: 'piece', price: 1200 },
+    { key: 'we-hinge', name: 'Heavy gate hinge', unit: 'pair', price: 6000 },
+    { key: 'we-paint', name: 'Anti-rust paint (4 L)', unit: 'tin', price: 13000 },
+  ],
+  'Aluminium Fabricator': [
+    { key: 'al-frame', name: 'Aluminium window profile (6 m)', unit: 'length', price: 16000 },
+    { key: 'al-door', name: 'Aluminium door profile (6 m)', unit: 'length', price: 21000 },
+    { key: 'al-glass', name: 'Glass pane 5 mm (per m²)', unit: 'm²', price: 14000 },
+    { key: 'al-rubber', name: 'Window rubber seal (roll)', unit: 'roll', price: 4500 },
+    { key: 'al-lock', name: 'Sliding window lock', unit: 'piece', price: 2500 },
+    { key: 'al-roller', name: 'Sliding roller (pair)', unit: 'pair', price: 2000 },
+    { key: 'al-net', name: 'Mosquito net (roll)', unit: 'roll', price: 12000 },
+  ],
+  'Glass Installer': [
+    { key: 'gl-temp', name: 'Tempered glass 10 mm (per m²)', unit: 'm²', price: 45000 },
+    { key: 'gl-mirror', name: 'Mirror 5 mm (per m²)', unit: 'm²', price: 22000 },
+    { key: 'gl-hinge', name: 'Shower door hinge', unit: 'piece', price: 9000 },
+    { key: 'gl-handle', name: 'Glass door handle', unit: 'piece', price: 12000 },
+    { key: 'gl-clamp', name: 'Glass clamp', unit: 'piece', price: 3500 },
+    { key: 'gl-silicone', name: 'Clear silicone sealant', unit: 'tube', price: 2500 },
+    { key: 'gl-channel', name: 'U-channel (3 m)', unit: 'length', price: 7500 },
+  ],
+  Cleaner: [
+    { key: 'cl-deter', name: 'Liquid detergent (5 L)', unit: 'gallon', price: 6500 },
+    { key: 'cl-bleach', name: 'Bleach (5 L)', unit: 'gallon', price: 5000 },
+    { key: 'cl-disinf', name: 'Disinfectant (5 L)', unit: 'gallon', price: 8000 },
+    { key: 'cl-glass', name: 'Glass cleaner (1 L)', unit: 'bottle', price: 2500 },
+    { key: 'cl-mop', name: 'Mop and bucket set', unit: 'set', price: 9000 },
+    { key: 'cl-bags', name: 'Refuse bags (roll)', unit: 'roll', price: 2000 },
+    { key: 'cl-scrub', name: 'Scrubbing pads (pack)', unit: 'pack', price: 1500 },
+  ],
+  'AC Technician': [
+    { key: 'ac-gas', name: 'Refrigerant gas R410A (per kg)', unit: 'kg', price: 18000 },
+    { key: 'ac-copper', name: 'Copper pipe set ¼"+⅜" (3 m)', unit: 'set', price: 28000 },
+    { key: 'ac-insul', name: 'Pipe insulation (roll)', unit: 'roll', price: 5000 },
+    { key: 'ac-bracket', name: 'Outdoor unit bracket', unit: 'set', price: 9000 },
+    { key: 'ac-cap', name: 'Compressor capacitor', unit: 'piece', price: 7500 },
+    { key: 'ac-drain', name: 'Drain hose (5 m)', unit: 'length', price: 2500 },
+    { key: 'ac-cable', name: '2.5 mm² cable (10 m)', unit: 'length', price: 7000 },
+  ],
+  Builder: [
+    { key: 'hr-cement-b', name: 'Cement (50 kg)', unit: 'bag', price: 6500 },
+    { key: 'bu-block6', name: 'Sandcrete block 6"', unit: 'block', price: 550 },
+    { key: 'bu-block9', name: 'Sandcrete block 9"', unit: 'block', price: 700 },
+    { key: 'bu-sand', name: 'Sharp sand', unit: 'ton', price: 25000 },
+    { key: 'bu-granite', name: 'Granite ¾"', unit: 'ton', price: 38000 },
+    { key: 'bu-rod12', name: 'Iron rod 12 mm', unit: 'length', price: 9500 },
+    { key: 'bu-wire', name: 'Binding wire (roll)', unit: 'roll', price: 22000 },
+    { key: 'bu-dpm', name: 'Damp-proof membrane (roll)', unit: 'roll', price: 30000 },
   ],
 };
 
@@ -287,7 +374,7 @@ export function journeySteps(job: Pick<Job, 'tier'>): JourneyStep[] {
     { key: 'posted', label: 'Job posted' },
     { key: 'bids', label: 'Bids received' },
     { key: 'accepted', label: 'Bid accepted and paid' },
-    { key: 'vendor', label: 'Vendor supplying materials' },
+    { key: 'vendor', label: 'Allyfe Supply sourcing materials' },
     { key: 'delivered', label: 'Materials delivered' },
     { key: 'started', label: 'Work started' },
     { key: 'finished', label: 'Work finished' },
@@ -342,18 +429,6 @@ export function displayPhone(canonical: string): string {
   return `${d.slice(0, 4)} ${d.slice(4, 7)} ${d.slice(7)}`;
 }
 
-export const TRADES: { trade: string; categories: Category[] }[] = [
-  { trade: 'Carpenter', categories: ['Home Renovation', 'Interior Design'] },
-  { trade: 'Plumber', categories: ['Plumbing'] },
-  { trade: 'Electrician', categories: ['Electrical'] },
-  { trade: 'Painter', categories: ['Painting', 'Interior Design'] },
-  { trade: 'Tiler', categories: ['Home Renovation'] },
-  { trade: 'Mason / Bricklayer', categories: ['Home Renovation'] },
-  { trade: 'POP / Ceiling installer', categories: ['Interior Design'] },
-  { trade: 'Welder / Fabricator', categories: ['Home Renovation'] },
-  { trade: 'Interior decorator', categories: ['Interior Design', 'Painting'] },
-];
-
 export const BANKS = [
   'Access Bank', 'Ecobank', 'Fidelity Bank', 'First Bank', 'FCMB', 'GTBank', 'Kuda', 'Moniepoint', 'Opay', 'PalmPay',
   'Polaris Bank', 'Stanbic IBTC', 'Sterling Bank', 'UBA', 'Union Bank', 'Wema Bank', 'Zenith Bank',
@@ -377,3 +452,111 @@ export function avatarFor(name: string, photo?: string) {
   const hairs = ['short', 'long', 'wrap', 'short'] as const;
   return { bg, shirt, skin: skins[h % skins.length], hair: hairs[(h >> 3) % hairs.length], ...(photo ? { photo } : {}) };
 }
+
+/* ---------------- Allyfe Supply: comparison engine ---------------- */
+
+/** Quantity of each line still to be sourced: not delivered, and not held by a live purchase order. */
+export function supplyNeed(supply: Pick<Supply, 'lines' | 'orders'>): Record<string, number> {
+  const need: Record<string, number> = {};
+  for (const l of supply.lines) need[l.id] = l.qty - l.delivered;
+  for (const o of supply.orders) {
+    if (!['issued', 'confirmed', 'dispatched'].includes(o.status)) continue;
+    for (const pl of o.lines) need[pl.lineId] -= o.status === 'issued' ? pl.qty : (pl.confirmed ?? pl.qty);
+  }
+  for (const k of Object.keys(need)) need[k] = Math.max(0, need[k]);
+  return need;
+}
+
+export type SupplyOption = {
+  kind: 'single' | 'combined';
+  /** For a single supplier: who. */
+  vendorId?: string;
+  vendorIds: string[];
+  allocations: Allocation[];
+  materials: number;
+  delivery: number;
+  total: number;
+  /** True when every outstanding quantity is covered. */
+  complete: boolean;
+  uncovered: { lineId: string; qty: number }[];
+  substitutions: number;
+};
+
+const finish = (kind: SupplyOption['kind'], allocations: Allocation[], offers: SupplyOffer[], need: Record<string, number>, vendorId?: string): SupplyOption => {
+  const vendorIds = [...new Set(allocations.map((a) => a.vendorId))];
+  const materials = allocations.reduce((s, a) => s + a.qty * a.unitPrice, 0);
+  const delivery = vendorIds.reduce((s, v) => s + (offers.find((o) => o.vendorId === v && o.status === 'active')?.deliveryFee ?? 0), 0);
+  const got: Record<string, number> = {};
+  for (const a of allocations) got[a.lineId] = (got[a.lineId] ?? 0) + a.qty;
+  const uncovered = Object.entries(need).filter(([id, q]) => q > (got[id] ?? 0)).map(([lineId, q]) => ({ lineId, qty: q - (got[lineId] ?? 0) }));
+  return { kind, vendorId, vendorIds, allocations, materials, delivery, total: materials + delivery, complete: uncovered.length === 0, uncovered, substitutions: allocations.filter((a) => a.substitute).length };
+};
+
+/**
+ * Compares sourcing options for what is still needed:
+ * every vendor who can supply the complete outstanding list on their own, and the
+ * cheapest combination of vendors (line by line, splitting quantities, never
+ * allocating any offered stock twice). Sorted complete-first, then by total cost.
+ */
+export function compareOffers(supply: Pick<Supply, 'lines' | 'orders' | 'offers'>): SupplyOption[] {
+  const need = supplyNeed(supply);
+  const needed = Object.entries(need).filter(([, q]) => q > 0);
+  const offers = supply.offers.filter((o) => o.status === 'active');
+  if (!needed.length || !offers.length) return [];
+  const options: SupplyOption[] = [];
+  for (const o of offers) {
+    const allocations: Allocation[] = [];
+    for (const [lineId, q] of needed) {
+      const it = o.items.find((i) => i.lineId === lineId);
+      if (it && it.qty > 0) allocations.push({ lineId, vendorId: o.vendorId, offerId: o.id, qty: Math.min(q, it.qty), unitPrice: it.unitPrice, ...(it.substitute ? { substitute: it.substitute } : {}) });
+    }
+    const opt = finish('single', allocations, offers, need, o.vendorId);
+    if (opt.complete) options.push(opt);
+  }
+  // Combined: for each line take the cheapest offered stock first (spec matches before substitutes).
+  const left = new Map<string, number>();
+  for (const o of offers) for (const it of o.items) left.set(o.id + '|' + it.lineId, it.qty);
+  const combined: Allocation[] = [];
+  for (const [lineId, q] of needed) {
+    let remaining = q;
+    const items = offers
+      .flatMap((o) => o.items.filter((i) => i.lineId === lineId && i.qty > 0).map((i) => ({ o, i })))
+      .sort((a, b) => Number(!!a.i.substitute) - Number(!!b.i.substitute) || a.i.unitPrice - b.i.unitPrice);
+    for (const { o, i } of items) {
+      if (remaining <= 0) break;
+      const k = o.id + '|' + lineId;
+      const take = Math.min(remaining, left.get(k) ?? 0);
+      if (take <= 0) continue;
+      left.set(k, (left.get(k) ?? 0) - take);
+      remaining -= take;
+      combined.push({ lineId, vendorId: o.vendorId, offerId: o.id, qty: take, unitPrice: i.unitPrice, ...(i.substitute ? { substitute: i.substitute } : {}) });
+    }
+  }
+  const comb = finish('combined', combined, offers, need);
+  const sameAsSingle = comb.vendorIds.length === 1 && options.some((o) => o.vendorId === comb.vendorIds[0] && o.total === comb.total);
+  if (comb.allocations.length && !sameAsSingle) options.push(comb);
+  return options.sort((a, b) => Number(b.complete) - Number(a.complete) || a.total - b.total);
+}
+
+/** Money Allyfe still holds for materials on this job (escrow minus the service fee and unpaid orders already committed). */
+export function supplyFunds(job: Pick<Job, 'escrow' | 'serviceFee' | 'supply'>): number {
+  const committed = (job.supply?.orders ?? [])
+    .filter((o) => ['issued', 'confirmed', 'dispatched'].includes(o.status))
+    .reduce((s, o) => s + o.lines.reduce((t, l) => t + (o.status === 'issued' ? l.qty : (l.confirmed ?? l.qty)) * l.unitPrice, 0) + o.deliveryFee, 0);
+  return Math.max(0, job.escrow - (job.serviceFee ?? 0) - committed);
+}
+
+export const poTotal = (o: Pick<PurchaseOrder, 'lines' | 'deliveryFee' | 'status'>) =>
+  o.lines.reduce((s, l) => s + (o.status === 'issued' ? l.qty : (l.confirmed ?? l.qty)) * l.unitPrice, 0) + o.deliveryFee;
+
+export const lineProgress = (l: SupplyLine) => `${l.delivered} of ${l.qty} ${l.unit}${l.qty === 1 ? '' : 's'}`;
+export const offerTotal = (items: OfferItem[], deliveryFee: number) => items.reduce((s, i) => s + i.qty * i.unitPrice, 0) + deliveryFee;
+
+export const SUPPLY_STATUS_LABEL: Record<Supply['status'], string> = {
+  sourcing: 'Collecting vendor offers',
+  approval: 'Waiting for approvals',
+  ordering: 'Purchase orders sent',
+  delivering: 'Materials on the way',
+  complete: 'All materials delivered',
+  cancelled: 'Cancelled',
+};

@@ -21,6 +21,9 @@ export type Route =
   | { name: 'verify' }
   | { name: 'profileEdit' }
   | { name: 'orders'; tab?: 'new' | 'mine' }
+  | { name: 'supply'; tab?: 'action' | 'active' | 'done' }
+  | { name: 'vendors' }
+  | { name: 'vendor'; id: string }
   | { name: 'order'; jobId: string }
   | { name: 'feed' }
   | { name: 'composer' }
@@ -395,7 +398,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
 }
 
 /** Tab roots reset the back stack. */
-export const TAB_ROOTS: RouteName[] = ['home', 'discover', 'projects', 'jobs', 'feed', 'wallet', 'orders', 'me'];
+export const TAB_ROOTS: RouteName[] = ['home', 'discover', 'projects', 'jobs', 'feed', 'wallet', 'orders', 'supply', 'vendors', 'me'];
 
 export function useApp() {
   const c = useContext(AppCtx);

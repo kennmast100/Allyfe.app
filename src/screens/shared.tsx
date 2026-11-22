@@ -41,7 +41,7 @@ export function Feed() {
                         {a.trade} · <Stars rating={a.rating} />
                       </>
                     ) : (
-                      <>Market vendor · {a.market}</>
+                      <>{a.role === 'vendor' ? `Market vendor · ${a.market}` : 'Allyfe representative'}</>
                     )}{' '}
                     · {timeAgo(p.at)}
                   </div>
@@ -359,7 +359,7 @@ export function OfflineBanner() {
 export function Me() {
   const { user, state, dispatch, go, forcedOffline, setForcedOffline, env, auth } = useApp();
   if (!user) return null;
-  const verified = user.role === 'client' ? null : user.verification.status;
+  const verified = user.role === 'client' || user.role === 'rep' ? null : user.verification.status;
   return (
     <>
       <TopBar />

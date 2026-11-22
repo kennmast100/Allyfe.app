@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { Avatar, Icon, Logo, type IconName } from './art';
 import { useApp, type Route } from '../store/store';
 import type { User } from '../domain/types';
-import { vendorServes } from '../domain/actions';
+import { repQueue, vendorQueue } from '../domain/view';
 import { JOB_STATUS_LABEL, JOB_STATUS_TONE, dayKey, journeyIndex, journeySteps } from '../domain/rules';
 import { MediaError, readPhoto, readVideo } from './media';
 import type { Job } from '../domain/types';
@@ -138,13 +138,20 @@ export function BottomNav() {
             { label: 'Feed', icon: 'feed', route: { name: 'feed' } },
             { label: 'Wallet', icon: 'wallet', route: { name: 'wallet' } },
           ]
-        : [
-            { label: 'Home', icon: 'home', route: { name: 'home' } },
-            { label: 'Requests', icon: 'requests', route: { name: 'orders' }, badge: state.jobs.filter((j) => j.status === 'awarded' && j.materialsOrder?.status === 'open' && vendorServes(user, j)).length },
-            { label: 'Post Stock', icon: 'fab', route: { name: 'composer' } },
-            { label: 'Feed', icon: 'feed', route: { name: 'feed' } },
-            { label: 'Wallet', icon: 'wallet', route: { name: 'wallet' } },
-          ];
+        : user.role === 'rep'
+          ? [
+              { label: 'Home', icon: 'home', route: { name: 'home' } },
+              { label: 'Requests', icon: 'requests', route: { name: 'supply' }, badge: repQueue(state, user.id).action.length },
+              { label: 'Vendors', icon: 'shield', route: { name: 'vendors' } },
+              { label: 'Feed', icon: 'feed', route: { name: 'feed' } },
+            ]
+          : [
+              { label: 'Home', icon: 'home', route: { name: 'home' } },
+              { label: 'Supply', icon: 'requests', route: { name: 'orders' }, badge: ((q) => q.requests.length + q.toConfirm.length + q.toSend.length + q.toCollect.length)(vendorQueue(state, user.id)) },
+              { label: 'Post Stock', icon: 'fab', route: { name: 'composer' } },
+              { label: 'Feed', icon: 'feed', route: { name: 'feed' } },
+              { label: 'Wallet', icon: 'wallet', route: { name: 'wallet' } },
+            ];
   return (
     <nav className="nav" aria-label="Main" style={{ gridTemplateColumns: `repeat(${items.length}, 1fr)` }}>
       {items.map((n) => {

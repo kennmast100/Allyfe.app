@@ -1,8 +1,13 @@
-import type { AppState, Apprentice, Artisan, BankDetails, Category, City, Client, ImageRef, Job, QuoteLine, StockItem, Tier, TxnKind, User, Vendor } from './types';
+import type { AppState, Apprentice, Artisan, BankDetails, Category, City, Client, ImageRef, Job, OfferItem, PurchaseOrder, QuoteLine, Rep, StockItem, Supply, Tier, TxnKind, User, Vendor } from './types';
 import {
   CITIES,
   MIN_DESCRIPTION,
-  TRADES,
+  CATEGORIES,
+  JOB_ROLES,
+  compareOffers,
+  serviceName,
+  supplyFunds,
+  supplyNeed,
   avatarFor,
   displayPhone,
   maskBank,
@@ -42,6 +47,7 @@ export type JobDraft = {
   media: ImageRef[];
   honest: boolean;
   invitedArtisanId?: string;
+  specialisation?: string;
 };
 
 export type BidDraft = { lines: QuoteLine[]; serviceFee: number; day: string; message: string };
@@ -58,8 +64,9 @@ export type SignupProfile =
       kind: 'individual' | 'team';
       teamName: string;
       teamMembers: string[];
-      trade: string;
+      trade: Category;
       categories: Category[];
+      specialisations: string[];
       years: number;
       bio: string;
       bank: BankDetails;
@@ -78,9 +85,19 @@ export type Action =
   | { type: 'cancelJob'; jobId: string }
   | { type: 'submitBid'; jobId: string; bid: BidDraft }
   | { type: 'acceptBid'; jobId: string; bidId: string }
-  | { type: 'vendorAcceptOrder'; jobId: string }
-  | { type: 'vendorDispatch'; jobId: string; waybill: string }
-  | { type: 'confirmMaterials'; jobId: string }
+  | { type: 'submitOffer'; jobId: string; items: OfferItem[]; deliveryFee: number; deliveryDays: number; note: string }
+  | { type: 'withdrawOffer'; jobId: string }
+  | { type: 'recommendPlan'; jobId: string; kind: 'single' | 'combined'; vendorId?: string }
+  | { type: 'withdrawPlan'; jobId: string }
+  | { type: 'artisanReviewSupply'; jobId: string; ok: boolean; note: string }
+  | { type: 'clientReviewSupply'; jobId: string; ok: boolean; note: string }
+  | { type: 'authorizeSupply'; jobId: string }
+  | { type: 'confirmPO'; jobId: string; poId: string; confirmed: Record<string, number> }
+  | { type: 'declinePO'; jobId: string; poId: string; note: string }
+  | { type: 'dispatchPO'; jobId: string; poId: string; waybill: string }
+  | { type: 'receivePO'; jobId: string; poId: string; received: Record<string, number> }
+  | { type: 'refusePO'; jobId: string; poId: string; reason: string; note: string }
+  | { type: 'collectRefusedPO'; jobId: string; poId: string }
   | { type: 'startWork'; jobId: string }
   | { type: 'flagMisdescribed'; jobId: string }
   | { type: 'finishWork'; jobId: string }
@@ -93,14 +110,12 @@ export type Action =
   | { type: 'requestRefund'; jobId: string }
   | { type: 'chooseAnotherArtisan'; jobId: string }
   | { type: 'demoStartDay'; jobId: string }
-  | { type: 'updateProfile'; kind: 'individual' | 'team'; teamName: string; teamMembers: string[]; bio: string }
+  | { type: 'updateProfile'; kind: 'individual' | 'team'; teamName: string; teamMembers: string[]; bio: string; specialisations?: string[] }
   | { type: 'addApprentice'; name: string; phone: string; photo: ImageRef }
   | { type: 'removeApprentice'; apprenticeId: string }
   | { type: 'addVerificationFile'; key: string; image: ImageRef }
   | { type: 'submitVerification' }
   | { type: 'approveVerification'; userId: string }
-  | { type: 'rejectMaterials'; jobId: string; reason: string; note: string }
-  | { type: 'vendorPickedUp'; jobId: string }
   | { type: 'createPost'; image: ImageRef; text: string; stock?: StockItem }
   | { type: 'toggleLike'; postId: string }
   | { type: 'addComment'; postId: string; text: string }
@@ -169,6 +184,51 @@ export function reduce(prev: AppState, action: Action, now = Date.now(), nonce?:
     Object.values(s.users).filter((u): u is Artisan => u.role === 'artisan' && artisanQualifies(u, j) && !j.noShows.some((x) => x.artisanId === u.id));
   /** Verified vendors in the job's city who sell that kind of material. */
   const vendorsFor = (j: Job) => Object.values(s.users).filter((u): u is Vendor => u.role === 'vendor' && vendorServes(u, j));
+  const supplyOf = (j: Job) => j.supply || fail('This job has no materials to source.');
+  const po = (j: Job, poId: string) => supplyOf(j).orders.find((o) => o.id === poId) || fail('Purchase order not found.');
+  /** The representative coordinating this job's supply (or any rep in the city if none is assigned yet). */
+  const repFor = (j: Job) => {
+    const r = meAs('rep');
+    if (r.city !== j.city) fail(`This request is in ${j.city}. You cover ${r.city}.`);
+    const sp = supplyOf(j);
+    if (sp.repId && sp.repId !== r.id) fail('Another representative is coordinating this request.');
+    sp.repId ??= r.id;
+    return r;
+  };
+  const alertRep = (j: Job, text: string) => j.supply?.repId && alert(j.supply.repId, text, j.id);
+  const pickRep = (city: City) => {
+    const reps = Object.values(s.users).filter((u): u is Rep => u.role === 'rep' && u.city === city);
+    const load = (r: Rep) => s.jobs.filter((x) => x.supply?.repId === r.id && !['complete', 'cancelled'].includes(x.supply.status)).length;
+    return reps.sort((a, b) => load(a) - load(b))[0];
+  };
+  /** Keeps the supply and job status in step with the lines and orders; settles up when everything has arrived. */
+  const syncSupply = (j: Job) => {
+    const sp = j.supply;
+    if (!sp || sp.status === 'cancelled' || sp.status === 'complete') return;
+    if (sp.lines.every((l) => l.delivered >= l.qty)) {
+      sp.status = 'complete';
+      sp.plan = undefined;
+      // Reconciliation: whatever is left of the materials money goes back to the client.
+      const leftover = j.escrow - (j.serviceFee ?? 0);
+      if (leftover > 0) {
+        credit(j.clientId, leftover, `Materials savings returned · ${j.title}`);
+        j.escrow -= leftover;
+        sp.refunded = leftover;
+      }
+      j.deliveredMaterials.push(...sp.lines.map((l) => ({ key: l.key, name: l.name, unit: l.unit, unitPrice: l.budgetPrice, qty: l.delivered, spec: l.spec })));
+      j.status = 'ready';
+      log(j, `All materials delivered and reconciled${leftover > 0 ? ` · ${formatNaira(leftover)} savings returned to client` : ''}`, 'Allyfe Supply');
+      alert(j.artisanId!, `All materials for “${j.title}” are at the client's home. Go and start work on ${j.scheduledDay}. Address: ${j.addr}.`, j.id);
+      if (leftover > 0) alert(j.clientId, `All materials for “${j.title}” have arrived. ${formatNaira(leftover)} you didn't need was returned to your wallet.`, j.id);
+      alertRep(j, `Supply ${sp.ref} for “${j.title}” is complete.`);
+      return;
+    }
+    const need = supplyNeed(sp);
+    const anyNeed = Object.values(need).some((q) => q > 0);
+    sp.status = sp.plan ? 'approval' : anyNeed ? 'sourcing' : sp.orders.some((o) => o.status === 'dispatched') ? 'delivering' : 'ordering';
+    j.status = sp.orders.some((o) => o.status === 'dispatched') ? 'materials_on_the_way' : 'awarded';
+  };
+  const withdrawVendorOffer = (sp: Supply, vendorId: string) => sp.offers.filter((o) => o.vendorId === vendorId && o.status === 'active').forEach((o) => (o.status = 'withdrawn'));
   const refundEscrow = (j: Job, label: string) => {
     credit(j.clientId, j.escrow, label);
     j.escrow = 0;
@@ -202,21 +262,23 @@ export function reduce(prev: AppState, action: Action, now = Date.now(), nonce?:
       if (p.role === 'client') {
         user = { id: 'c-' + id('u'), role: 'client', ...base, bank: '' } satisfies Client;
       } else if (p.role === 'artisan') {
-        if (!TRADES.some((t) => t.trade === p.trade) && !p.trade.trim()) fail('Choose your trade.');
-        if (!p.categories.length) fail('Choose at least one kind of job you take.');
+        if (!CATEGORIES.includes(p.trade)) fail('Choose your main job role.');
+        const cats = [...new Set([p.trade, ...p.categories.filter((c) => CATEGORIES.includes(c))])];
+        const allowed = new Set(JOB_ROLES.filter((r) => cats.includes(r.role)).flatMap((r) => r.specialisations));
+        const specs = [...new Set(p.specialisations ?? [])].filter((x) => allowed.has(x));
         if (!(p.years >= 0 && p.years <= 60)) fail('Enter your years of experience.');
         const members = p.teamMembers.map((m) => m.trim()).filter(Boolean);
         if (p.kind === 'team' && !p.teamName.trim()) fail('Give your team a name.');
         if (p.kind === 'team' && members.length < 2) fail('A team needs at least 2 members.');
         user = {
-          id: 'a-' + id('u'), role: 'artisan', ...base, trade: p.trade.trim(), categories: p.categories, rating: 0, ratingCount: 0, jobsDone: 0,
+          id: 'a-' + id('u'), role: 'artisan', ...base, trade: p.trade, categories: cats, specialisations: specs, rating: 0, ratingCount: 0, jobsDone: 0,
           years: Math.round(p.years), bio: p.bio.trim(), work: [], bank: checkBank(p.bank), verification: none,
           kind: p.kind, teamName: p.kind === 'team' ? p.teamName.trim() : undefined, teamMembers: p.kind === 'team' ? members : [], apprentices: [],
         } satisfies Artisan;
       } else {
         if (!p.market.trim()) fail('Enter the market or street where your shop is.');
         if (p.ownerName.trim().length < 3) fail("Enter the owner's full name.");
-        if (!p.categories.length) fail('Choose at least one kind of material you sell.');
+        if (!p.categories.length || !p.categories.every((c) => CATEGORIES.includes(c))) fail('Choose at least one kind of material you sell.');
         user = {
           id: 'v-' + id('u'), role: 'vendor', ...base, market: p.market.trim(), ownerName: p.ownerName.trim(), categories: p.categories,
           bank: checkBank(p.bank), verification: none,
@@ -254,6 +316,7 @@ export function reduce(prev: AppState, action: Action, now = Date.now(), nonce?:
     case 'postJob': {
       const c = meAs('client');
       const d = action.draft;
+      if (!CATEGORIES.includes(d.category)) fail('Choose the kind of job.');
       if (!d.title.trim()) fail('Add a short job title so artisans know what you need.');
       if (d.desc.trim().length < MIN_DESCRIPTION) fail(`Describe the job in more detail (at least ${MIN_DESCRIPTION} characters): sizes, quantities, what is broken and what you want.`);
       if (!d.addr.trim()) fail('Add the address where the work will happen.');
@@ -264,12 +327,13 @@ export function reduce(prev: AppState, action: Action, now = Date.now(), nonce?:
       const j: Job = {
         id: id('j'), ref: 'PH-' + (4200 + s.seq), clientId: c.id, city: c.city, title: d.title.trim(), desc: d.desc.trim(), addr: d.addr.trim(), category: d.category, tier: d.tier,
         preferredDays: d.preferredDays.slice().sort(), media: d.media, status: 'open', bids: [], invitedArtisanId: d.invitedArtisanId,
+        ...(d.specialisation && JOB_ROLES.find((r) => r.role === d.category)?.specialisations.includes(d.specialisation) ? { specialisation: d.specialisation } : {}),
         escrow: 0, deliveredMaterials: [], noShows: [], history: [], createdAt: now,
       };
       log(j, 'Job posted', c.name);
       s.jobs.unshift(j);
       const targets = d.invitedArtisanId ? [d.invitedArtisanId] : artisansFor(j).map((a) => a.id);
-      targets.forEach((aid) => alert(aid, d.invitedArtisanId ? `${c.name} wants you for “${j.title}”. Send your quotation.` : `New ${d.category.toLowerCase()} job in ${c.city}: “${j.title}”. Read it and send your quotation.`, j.id));
+      targets.forEach((aid) => alert(aid, d.invitedArtisanId ? `${c.name} wants you for “${j.title}”. Send your quotation.` : `New ${serviceName(d.category).toLowerCase()} job in ${c.city}: “${j.title}”. Read it and send your quotation.`, j.id));
       break;
     }
     case 'cancelJob': {
@@ -298,10 +362,10 @@ export function reduce(prev: AppState, action: Action, now = Date.now(), nonce?:
         if (l.key.startsWith('custom:')) {
           if (!l.name.trim()) fail('Give each extra material a name.');
           if (!(l.unitPrice > 0)) fail(`Add a price for ${l.name.trim()}.`);
-          return { key: customKey(l.name), name: l.name.trim(), unit: l.unit.trim() || 'item', unitPrice: Math.round(l.unitPrice), qty };
+          return { key: customKey(l.name), name: l.name.trim(), unit: l.unit.trim() || 'item', unitPrice: Math.round(l.unitPrice), qty, ...(l.spec?.trim() ? { spec: l.spec.trim().slice(0, 120) } : {}) };
         }
         const item = catalogItem(j.category, l.key) || fail('One of the materials is not on the list for this job type.');
-        return { key: item.key, name: item.name, unit: item.unit, unitPrice: item.price, qty };
+        return { key: item.key, name: item.name, unit: item.unit, unitPrice: item.price, qty, ...(l.spec?.trim() ? { spec: l.spec.trim().slice(0, 120) } : {}) };
       });
       if (!(b.serviceFee > 0)) fail('Set your service fee.');
       if (!j.preferredDays.includes(b.day)) fail('Pick one of the days the client chose.');
@@ -334,12 +398,19 @@ export function reduce(prev: AppState, action: Action, now = Date.now(), nonce?:
       });
       log(j, `Accepted ${name(b.artisanId)}'s bid · ${formatNaira(charge.total)} held by Allyfe`, c.name);
       if (charge.billable.length) {
-        j.materialsOrder = { id: id('o'), lines: charge.billable, total: charge.materials, status: 'open', at: now, rejections: [] };
+        const supplyId = id('s');
+        const rep = pickRep(j.city);
+        j.supply = {
+          id: supplyId, ref: 'SR-' + j.ref.replace(/^PH-/, ''), repId: rep?.id, offers: [], orders: [], status: 'sourcing', at: now,
+          lines: charge.billable.map((l, i) => ({ id: `${supplyId}-L${i + 1}`, key: l.key, name: l.name, unit: l.unit, spec: l.spec ?? '', qty: l.qty, budgetPrice: l.unitPrice, delivered: 0 })),
+        };
         j.status = 'awarded';
-        vendorsFor(j).forEach((v) => alert(v.id, `New materials request in ${j.city}: ${formatNaira(charge.materials)} for “${j.title}”.`, j.id));
-        alert(b.artisanId, `${c.name} accepted your bid for “${j.title}”. A vendor will deliver the materials; you start on ${b.day}.`, j.id);
+        log(j, `Allyfe Supply request ${j.supply.ref} created: ${j.supply.lines.length} material line${j.supply.lines.length > 1 ? 's' : ''}${rep ? ` · coordinated by ${rep.name}` : ''}`, 'Allyfe Supply');
+        vendorsFor(j).forEach((v) => alert(v.id, `New supply request in ${j.city}: ${j.supply!.lines.length} items for “${j.title}”. Send an offer for all or some of them.`, j.id));
+        if (rep) alert(rep.id, `New supply request ${j.supply.ref} for “${j.title}” (${formatNaira(charge.materials)} budget). Vendors have been notified.`, j.id);
+        alert(b.artisanId, `${c.name} accepted your bid for “${j.title}”. Allyfe Supply is sourcing the materials; you start on ${b.day}.`, j.id);
       } else {
-        j.materialsOrder = undefined;
+        j.supply = undefined;
         j.status = 'ready';
         log(j, 'All materials already at the client’s home', 'Allyfe');
         alert(b.artisanId, `${c.name} accepted your bid for “${j.title}”. Materials are already on site. Start on ${b.day}. Address: ${j.addr}.`, j.id);
@@ -347,83 +418,268 @@ export function reduce(prev: AppState, action: Action, now = Date.now(), nonce?:
       break;
     }
 
-    /* ---------- vendors ---------- */
-    case 'vendorAcceptOrder': {
+    /* ---------- Allyfe Supply ---------- */
+    case 'submitOffer': {
       const v = meAs('vendor');
       const j = job(action.jobId);
-      expect(j, 'awarded');
-      const o = j.materialsOrder!;
-      if (v.verification.status !== 'verified') fail('Finish verification before taking orders.');
-      if (v.city !== j.city) fail(`This order is in ${j.city}. You supply ${v.city}.`);
-      if (!v.categories.includes(j.category)) fail(`You don't sell ${j.category.toLowerCase()} materials. Add it to your profile first.`);
-      if (o.status !== 'open') fail('Another vendor has already taken this order.');
-      o.status = 'accepted';
-      o.vendorId = v.id;
-      log(j, `${v.name} is supplying the materials`, v.name);
-      alert(j.clientId, `${v.name} will deliver the materials for “${j.title}” to your home.`, j.id);
-      alert(j.artisanId!, `${v.name} is supplying the materials for “${j.title}”.`, j.id);
-      vendorsFor(j).filter((x) => x.id !== v.id).forEach((x) => alert(x.id, `The materials request for “${j.title}” was taken by another vendor.`, j.id));
+      expect(j, 'awarded', 'materials_on_the_way');
+      const sp = supplyOf(j);
+      if (v.verification.status !== 'verified') fail('Finish verification before sending offers.');
+      if (!vendorServes(v, j)) fail(v.city !== j.city ? `This request is in ${j.city}. You supply ${v.city}.` : `You don't sell ${serviceName(j.category).toLowerCase()} materials. Add it to your profile first.`);
+      if (sp.plan?.allocations.some((a) => a.vendorId === v.id)) fail('Your current offer is in a plan waiting for approval. You can change it if the plan is not approved.');
+      const need = supplyNeed(sp);
+      const items: OfferItem[] = [];
+      for (const it of action.items) {
+        const line = sp.lines.find((l) => l.id === it.lineId) || fail('One of the items is not on this request.');
+        const qty = Math.round(it.qty);
+        if (!(qty >= 1)) continue;
+        if (!need[line.id]) fail(`${line.name} is already sourced.`);
+        if (qty > need[line.id]) fail(`Only ${need[line.id]} ${line.unit}${need[line.id] > 1 ? 's' : ''} of ${line.name} are still needed.`);
+        if (!(it.unitPrice > 0)) fail(`Add your price for ${line.name}.`);
+        const substitute = it.substitute?.trim().slice(0, 120);
+        if (items.some((x) => x.lineId === line.id)) fail(`${line.name} is listed twice.`);
+        items.push({ lineId: line.id, qty, unitPrice: Math.round(it.unitPrice), ...(substitute ? { substitute } : {}) });
+      }
+      if (!items.length) fail('Offer at least one item: tick it and add a quantity and price.');
+      if (!(action.deliveryFee >= 0)) fail('Enter a delivery fee (0 if free).');
+      if (!(action.deliveryDays >= 0 && action.deliveryDays <= 14)) fail('Delivery must be within 14 days.');
+      withdrawVendorOffer(sp, v.id);
+      sp.offers.push({ id: id('of'), vendorId: v.id, items, deliveryFee: Math.round(action.deliveryFee), deliveryDays: Math.round(action.deliveryDays), note: action.note.trim().slice(0, 300), status: 'active', at: now });
+      const full = items.length === Object.values(need).filter((q) => q > 0).length && items.every((i) => i.qty === need[i.lineId]);
+      log(j, `${v.name} offered ${full ? 'the full list' : `${items.length} of ${sp.lines.length} items`}`, v.name);
+      alertRep(j, `${v.name} sent a ${full ? 'full' : 'partial'} offer for ${sp.ref} (“${j.title}”).`);
       break;
     }
-    case 'vendorDispatch': {
+    case 'withdrawOffer': {
+      const v = meAs('vendor');
+      const sp = supplyOf(job(action.jobId));
+      if (sp.plan?.allocations.some((a) => a.vendorId === v.id)) fail('Your offer is in a plan waiting for approval.');
+      if (!sp.offers.some((o) => o.vendorId === v.id && o.status === 'active')) fail('You have no active offer here.');
+      withdrawVendorOffer(sp, v.id);
+      break;
+    }
+    case 'recommendPlan': {
+      const j = job(action.jobId);
+      const r = repFor(j);
+      expect(j, 'awarded', 'materials_on_the_way');
+      const sp = supplyOf(j);
+      if (sp.plan) fail('A plan is already waiting for approval.');
+      const opt = compareOffers(sp).find((o) => o.kind === action.kind && (action.kind === 'combined' || o.vendorId === action.vendorId)) || fail('That option is no longer available. Refresh the comparison.');
+      const funds = supplyFunds(j);
+      const extra = Math.max(0, opt.total - funds);
+      sp.plan = {
+        kind: opt.kind, allocations: opt.allocations, materials: opt.materials, delivery: opt.delivery, total: opt.total, extra,
+        substitutions: opt.substitutions, needsClient: extra > 0 || opt.substitutions > 0, recommendedAt: now,
+      };
+      syncSupply(j);
+      const who = opt.vendorIds.map(name).join(' + ');
+      log(j, `${r.name} recommended ${opt.kind === 'single' ? 'complete supply' : 'combined supply'} from ${who}: ${formatNaira(opt.total)}${opt.complete ? '' : ' (partial; the rest stays in sourcing)'}`, r.name);
+      alert(j.artisanId!, `Materials plan for “${j.title}”: ${who}, ${formatNaira(opt.total)}. Please confirm the materials are technically right.`, j.id);
+      break;
+    }
+    case 'withdrawPlan': {
+      const j = job(action.jobId);
+      const r = repFor(j);
+      const sp = supplyOf(j);
+      const plan = sp.plan || fail('There is no plan to withdraw.');
+      if (plan.clientOkAt && plan.extra > 0) {
+        credit(j.clientId, plan.extra, `Extra for materials returned · ${j.title}`);
+        j.escrow -= plan.extra;
+      }
+      sp.plan = undefined;
+      syncSupply(j);
+      log(j, 'Materials plan withdrawn', r.name);
+      break;
+    }
+    case 'artisanReviewSupply': {
+      const j = job(action.jobId);
+      const a = assignedArtisan(j);
+      const sp = supplyOf(j);
+      const plan = sp.plan || fail('There is no materials plan to review.');
+      if (plan.artisanOkAt) fail('You have already confirmed this plan.');
+      if (!action.ok) {
+        if (!action.note.trim()) fail('Tell the representative what is wrong with the materials.');
+        sp.plan = undefined;
+        syncSupply(j);
+        log(j, `Artisan rejected the materials plan: ${action.note.trim()}`, a.name);
+        alertRep(j, `${a.name} rejected the plan for ${sp.ref}: “${action.note.trim()}”. Please re-source.`);
+        break;
+      }
+      plan.artisanOkAt = now;
+      log(j, 'Artisan confirmed the materials are technically suitable', a.name);
+      if (plan.needsClient)
+        alert(j.clientId, `Please approve the materials plan for “${j.title}”${plan.extra > 0 ? `: it costs ${formatNaira(plan.extra)} more than budgeted` : ''}${plan.substitutions ? ` and includes ${plan.substitutions} substitution${plan.substitutions > 1 ? 's' : ''}` : ''}.`, j.id);
+      else alertRep(j, `${a.name} confirmed the plan for ${sp.ref}. Ready for you to authorize.`);
+      break;
+    }
+    case 'clientReviewSupply': {
+      const j = job(action.jobId);
+      const c = ownClient(j);
+      const sp = supplyOf(j);
+      const plan = sp.plan || fail('There is no materials plan to approve.');
+      if (!plan.needsClient) fail('This plan does not need your approval.');
+      if (!plan.artisanOkAt) fail('The artisan has to confirm the materials first.');
+      if (plan.clientOkAt) fail('You have already approved this plan.');
+      if (!action.ok) {
+        sp.plan = undefined;
+        syncSupply(j);
+        log(j, `Client declined the materials plan${action.note.trim() ? `: ${action.note.trim()}` : ''}`, c.name);
+        alertRep(j, `${c.name} declined the plan for ${sp.ref}${action.note.trim() ? `: “${action.note.trim()}”` : ''}. Please re-source.`);
+        break;
+      }
+      if (plan.extra > 0) {
+        debit(c.id, plan.extra, `Extra for materials · ${j.title}`, 'hold');
+        j.escrow += plan.extra;
+      }
+      plan.clientOkAt = now;
+      log(j, `Client approved the materials plan${plan.extra > 0 ? ` and paid ${formatNaira(plan.extra)} extra` : ''}`, c.name);
+      alertRep(j, `${c.name} approved the plan for ${sp.ref}. Ready for you to authorize.`);
+      break;
+    }
+    case 'authorizeSupply': {
+      const j = job(action.jobId);
+      const r = repFor(j);
+      const sp = supplyOf(j);
+      const plan = sp.plan || fail('There is no plan to authorize.');
+      if (!plan.artisanOkAt) fail('Waiting for the artisan to confirm the materials.');
+      if (plan.needsClient && !plan.clientOkAt) fail('Waiting for the client to approve the plan.');
+      // Re-check nothing is allocated twice and every offer still stands.
+      const need = supplyNeed(sp);
+      const usedFromOffer = new Map<string, number>();
+      for (const al of plan.allocations) {
+        const offer = sp.offers.find((o) => o.id === al.offerId && o.status === 'active') || fail('An offer in this plan was withdrawn. Withdraw the plan and compare again.');
+        const it = offer.items.find((i) => i.lineId === al.lineId)!;
+        const k = offer.id + '|' + al.lineId;
+        usedFromOffer.set(k, (usedFromOffer.get(k) ?? 0) + al.qty);
+        if ((usedFromOffer.get(k) ?? 0) > it.qty) fail('An allocation exceeds what the vendor offered.');
+        need[al.lineId] -= al.qty;
+        if (need[al.lineId] < 0) fail('An item would be allocated twice. Withdraw the plan and compare again.');
+      }
+      const byVendor = new Map<string, PurchaseOrder['lines']>();
+      for (const al of plan.allocations) {
+        const line = sp.lines.find((l) => l.id === al.lineId)!;
+        const list = byVendor.get(al.vendorId) ?? [];
+        list.push({ lineId: al.lineId, name: al.substitute ? `${al.substitute} (instead of ${line.name})` : line.name, unit: line.unit, qty: al.qty, unitPrice: al.unitPrice, ...(al.substitute ? { substitute: al.substitute } : {}) });
+        byVendor.set(al.vendorId, list);
+      }
+      for (const [vendorId, lines] of byVendor) {
+        const fee = sp.offers.find((o) => o.vendorId === vendorId && o.status === 'active')?.deliveryFee ?? 0;
+        const order: PurchaseOrder = { id: id('po'), ref: `PO-${sp.ref.replace('SR-', '')}-${sp.orders.length + 1}`, vendorId, lines, deliveryFee: fee, status: 'issued', at: now };
+        sp.orders.push(order);
+        // The offered stock now lives in the purchase order.
+        withdrawVendorOffer(sp, vendorId);
+        alert(vendorId, `Purchase order ${order.ref} for “${j.title}”: ${formatNaira(lines.reduce((t, l) => t + l.qty * l.unitPrice, 0) + fee)}. Confirm your stock to reserve it.`, j.id);
+      }
+      sp.plan = undefined;
+      log(j, `${r.name} authorized the allocation · ${byVendor.size} purchase order${byVendor.size > 1 ? 's' : ''} issued`, r.name);
+      syncSupply(j);
+      alert(j.clientId, `Materials for “${j.title}” have been ordered from ${[...byVendor.keys()].map(name).join(' and ')}.`, j.id);
+      break;
+    }
+    case 'confirmPO': {
       const v = meAs('vendor');
       const j = job(action.jobId);
-      expect(j, 'awarded');
-      const o = j.materialsOrder!;
-      if (o.vendorId !== v.id) fail('This order belongs to another vendor.');
+      const o = po(j, action.poId);
+      if (o.vendorId !== v.id) fail('This purchase order is for another vendor.');
+      if (o.status !== 'issued') fail('You have already answered this purchase order.');
+      let total = 0;
+      for (const l of o.lines) {
+        const q = Math.round(action.confirmed[l.lineId] ?? l.qty);
+        if (!(q >= 0 && q <= l.qty)) fail(`Confirm between 0 and ${l.qty} for ${l.name}.`);
+        l.confirmed = q;
+        total += q;
+      }
+      if (!total) fail('You confirmed nothing. Use Decline instead.');
+      o.status = 'confirmed';
+      const short = o.lines.filter((l) => (l.confirmed ?? 0) < l.qty);
+      log(j, `${v.name} confirmed ${o.ref} · stock reserved${short.length ? ` · ${short.map((l) => `${l.qty - (l.confirmed ?? 0)} ${l.name}`).join(', ')} returned to sourcing` : ''}`, v.name);
+      if (short.length) alertRep(j, `${v.name} could only confirm part of ${o.ref}. ${short.length} item${short.length > 1 ? 's' : ''} returned to sourcing for ${supplyOf(j).ref}.`);
+      syncSupply(j);
+      break;
+    }
+    case 'declinePO': {
+      const v = meAs('vendor');
+      const j = job(action.jobId);
+      const o = po(j, action.poId);
+      if (o.vendorId !== v.id) fail('This purchase order is for another vendor.');
+      if (o.status !== 'issued') fail('You have already answered this purchase order.');
+      o.status = 'declined';
+      log(j, `${v.name} declined ${o.ref}${action.note.trim() ? `: ${action.note.trim()}` : ''} · items returned to sourcing`, v.name);
+      alertRep(j, `${v.name} declined ${o.ref}. The items are back in sourcing for ${supplyOf(j).ref}.`);
+      syncSupply(j);
+      break;
+    }
+    case 'dispatchPO': {
+      const v = meAs('vendor');
+      const j = job(action.jobId);
+      const o = po(j, action.poId);
+      if (o.vendorId !== v.id) fail('This purchase order is for another vendor.');
+      if (o.status !== 'confirmed') fail('Confirm the purchase order before sending the materials.');
       if (!action.waybill.trim()) fail('Add the waybill or rider details so the client knows what to expect.');
       o.status = 'dispatched';
       o.waybill = action.waybill.trim();
-      j.status = 'materials_on_the_way';
-      log(j, `Materials dispatched · ${o.waybill}`, v.name);
-      alert(j.clientId, `Materials for “${j.title}” are on the way: ${o.waybill}. Tap “I’ve received the materials” when they arrive.`, j.id);
+      log(j, `${o.ref} dispatched · ${o.waybill}`, v.name);
+      syncSupply(j);
+      alert(j.clientId, `${v.name} sent ${o.ref} for “${j.title}”: ${o.waybill}. Check each item when it arrives.`, j.id);
       break;
     }
-    case 'confirmMaterials': {
+    case 'receivePO': {
       const j = job(action.jobId);
       const c = ownClient(j);
-      expect(j, 'materials_on_the_way');
-      const o = j.materialsOrder!;
-      o.status = 'delivered';
-      j.escrow -= o.total;
-      credit(o.vendorId!, o.total, `Materials · ${j.title}`);
-      txn(c.id, `Materials paid to ${name(o.vendorId!)}`, o.total, 'out');
-      j.deliveredMaterials.push(...o.lines);
-      j.status = 'ready';
-      log(j, 'Client received the materials', c.name);
-      alert(o.vendorId!, `${c.name} received the materials. ${formatNaira(o.total)} is in your wallet.`, j.id);
-      alert(j.artisanId!, `Materials for “${j.title}” are at the client's home. Go and start work on ${j.scheduledDay}. Address: ${j.addr}.`, j.id);
+      const sp = supplyOf(j);
+      const o = po(j, action.poId);
+      if (o.status !== 'dispatched') fail('This delivery is not on its way yet.');
+      let paid = o.deliveryFee;
+      const short: string[] = [];
+      for (const l of o.lines) {
+        const max = l.confirmed ?? l.qty;
+        const q = Math.round(action.received[l.lineId] ?? max);
+        if (!(q >= 0 && q <= max)) fail(`Enter between 0 and ${max} for ${l.name}.`);
+        l.received = q;
+        paid += q * l.unitPrice;
+        sp.lines.find((x) => x.id === l.lineId)!.delivered += q;
+        if (q < max) short.push(`${max - q} ${l.name}`);
+      }
+      if (paid - o.deliveryFee <= 0) fail('Nothing received. If the delivery is wrong, refuse it instead.');
+      o.status = 'received';
+      o.paid = paid;
+      j.escrow -= paid;
+      credit(o.vendorId, paid, `Materials · ${o.ref} · ${j.title}`);
+      txn(c.id, `Materials paid to ${name(o.vendorId)} (${o.ref})`, paid, 'out');
+      log(j, `Client received ${o.ref} · ${formatNaira(paid)} paid to ${name(o.vendorId)}${short.length ? ` · short: ${short.join(', ')} (returned to sourcing)` : ''}`, c.name);
+      alert(o.vendorId, `${c.name} received ${o.ref}. ${formatNaira(paid)} is in your wallet.${short.length ? ` Short: ${short.join(', ')}.` : ''}`, j.id);
+      if (short.length) alertRep(j, `${o.ref} arrived short (${short.join(', ')}). Those items are back in sourcing for ${sp.ref}.`);
+      syncSupply(j);
       break;
     }
-
-    case 'rejectMaterials': {
+    case 'refusePO': {
       const j = job(action.jobId);
       const c = ownClient(j);
-      expect(j, 'materials_on_the_way');
-      const o = j.materialsOrder!;
+      const sp = supplyOf(j);
+      const o = po(j, action.poId);
+      if (o.status !== 'dispatched') fail('You can refuse a delivery once it is on its way.');
       if (!(MATERIAL_REJECT_REASONS as readonly string[]).includes(action.reason)) fail('Choose a reason from the list.');
       if (action.reason === 'Other' && !action.note.trim()) fail('Tell the vendor what is wrong with the materials.');
-      const v = s.users[o.vendorId!] as Vendor;
-      o.rejections.push({ vendorId: v.id, reason: action.reason, note: action.note.trim(), at: now });
-      // The vendor is not paid. The order goes back out so a vendor can supply it properly.
-      o.status = 'open';
-      o.vendorId = undefined;
-      o.waybill = undefined;
-      j.status = 'awarded';
-      log(j, `Materials not accepted: ${action.reason}`, c.name);
-      alert(v.id, `${c.name} did NOT accept the materials for “${j.title}”: ${action.reason}${action.note.trim() ? ` (“${action.note.trim()}”)` : ''}. Under your vendor contract, go back and collect them from ${j.addr}. You will not be paid for this delivery.`, j.id);
-      alert(j.artisanId!, `${c.name} refused the materials for “${j.title}” (${action.reason}). A vendor will deliver them again before you start.`, j.id);
-      vendorsFor(j).forEach((x) => alert(x.id, `Materials request reopened in ${j.city}: ${formatNaira(o.total)} for “${j.title}”.`, j.id));
+      o.status = 'refused';
+      o.refusal = { reason: action.reason, note: action.note.trim(), at: now };
+      withdrawVendorOffer(sp, o.vendorId);
+      log(j, `Client refused ${o.ref}: ${action.reason} · items returned to sourcing`, c.name);
+      alert(o.vendorId, `${c.name} did NOT accept ${o.ref} for “${j.title}”: ${action.reason}${action.note.trim() ? ` (“${action.note.trim()}”)` : ''}. Under your vendor contract, go back and collect the goods from ${j.addr}. This delivery is not paid.`, j.id);
+      alertRep(j, `${c.name} refused ${o.ref} (${action.reason}). The items are back in sourcing for ${sp.ref}.`);
+      alert(j.artisanId!, `${c.name} refused a materials delivery for “${j.title}” (${action.reason}). Allyfe Supply is re-sourcing it.`, j.id);
+      syncSupply(j);
       break;
     }
-    case 'vendorPickedUp': {
+    case 'collectRefusedPO': {
       const v = meAs('vendor');
       const j = job(action.jobId);
-      const r = j.materialsOrder?.rejections.find((x) => x.vendorId === v.id && !x.pickedUpAt);
-      if (!r) fail('There is nothing to collect for this job.');
-      r!.pickedUpAt = now;
-      log(j, 'Vendor collected the refused materials', v.name);
-      alert(j.clientId, `${v.name} has collected the materials you refused for “${j.title}”.`, j.id);
+      const o = po(j, action.poId);
+      if (o.vendorId !== v.id || o.status !== 'refused' || !o.refusal) fail('There is nothing to collect for this order.');
+      if (o.refusal!.pickedUpAt) fail('Already marked as collected.');
+      o.refusal!.pickedUpAt = now;
+      log(j, `${v.name} collected the refused goods of ${o.ref}`, v.name);
+      alert(j.clientId, `${v.name} has collected the materials you refused (${o.ref}).`, j.id);
+      alertRep(j, `${v.name} collected the refused goods of ${o.ref}.`);
       break;
     }
 
@@ -535,11 +791,19 @@ export function reduce(prev: AppState, action: Action, now = Date.now(), nonce?:
       const j = job(action.jobId);
       const c = ownClient(j);
       expect(j, 'no_show', 'awarded');
-      const o = j.materialsOrder;
-      if (j.status === 'awarded' && o?.status === 'accepted') {
-        alert(o.vendorId!, `${c.name} cancelled “${j.title}” before delivery. Please don't send the materials.`, j.id);
+      const sp = j.supply;
+      if (sp && j.status === 'awarded') {
+        if (sp.orders.some((o) => o.status === 'dispatched')) fail('Some materials are already on the way. Receive or refuse them first.');
+        for (const o of sp.orders.filter((x) => ['issued', 'confirmed'].includes(x.status))) {
+          o.status = 'cancelled';
+          alert(o.vendorId, `${c.name} cancelled “${j.title}”. Purchase order ${o.ref} is cancelled; please don't send the materials.`, j.id);
+        }
+        if (sp.plan?.clientOkAt) sp.plan = undefined;
+        sp.plan = undefined;
+        sp.offers.forEach((o) => (o.status = 'withdrawn'));
+        sp.status = 'cancelled';
+        alertRep(j, `${c.name} cancelled “${j.title}”. Supply ${sp.ref} is closed.`);
       }
-      if (o && o.status !== 'delivered') o.status = 'cancelled';
       const amount = j.escrow;
       refundEscrow(j, `Refund · ${j.title}`);
       j.status = 'refunded';
@@ -556,13 +820,13 @@ export function reduce(prev: AppState, action: Action, now = Date.now(), nonce?:
       j.acceptedBidId = undefined;
       j.scheduledDay = undefined;
       j.serviceFee = undefined;
-      j.materialsOrder = undefined;
+      j.supply = undefined;
       j.invitedArtisanId = undefined;
       const earliest = earliestWorkDay(now);
       j.preferredDays = j.preferredDays.filter((x) => x >= earliest);
       if (!j.preferredDays.length) j.preferredDays = [earliest];
       log(j, `Looking for another artisan · ${formatNaira(j.escrow)} still held`, c.name);
-      artisansFor(j).forEach((a) => alert(a.id, `A ${j.category.toLowerCase()} job in ${j.city} needs a new artisan: “${j.title}”. Some materials are already on site.`, j.id));
+      artisansFor(j).forEach((a) => alert(a.id, `A ${serviceName(j.category).toLowerCase()} job in ${j.city} needs a new artisan: “${j.title}”. Some materials are already on site.`, j.id));
       break;
     }
     case 'demoStartDay': {
@@ -588,6 +852,10 @@ export function reduce(prev: AppState, action: Action, now = Date.now(), nonce?:
         a.teamMembers = [];
       }
       a.bio = action.bio.trim() || a.bio;
+      if (action.specialisations) {
+        const allowed = new Set(JOB_ROLES.filter((r) => a.categories.includes(r.role)).flatMap((r) => r.specialisations));
+        a.specialisations = [...new Set(action.specialisations)].filter((x) => allowed.has(x));
+      }
       break;
     }
     case 'addApprentice': {
@@ -610,7 +878,7 @@ export function reduce(prev: AppState, action: Action, now = Date.now(), nonce?:
     /* ---------- verification ---------- */
     case 'addVerificationFile': {
       const u = me();
-      if (u.role === 'client') return fail('Clients do not need verification.');
+      if (u.role === 'client' || u.role === 'rep') return fail('This account does not need verification.');
       if (u.verification.status === 'review' || u.verification.status === 'verified') fail('Your documents are already submitted.');
       u.verification.files[action.key] = action.image;
       u.verification.status = 'partial';
@@ -618,7 +886,7 @@ export function reduce(prev: AppState, action: Action, now = Date.now(), nonce?:
     }
     case 'submitVerification': {
       const u = me();
-      if (u.role === 'client') return fail('Clients do not need verification.');
+      if (u.role === 'client' || u.role === 'rep') return fail('This account does not need verification.');
       const needed = VERIFICATION_ITEMS[u.role].map((i) => i.key);
       if (!needed.every((k) => u.verification.files[k])) fail('Add every photo before submitting.');
       u.verification.status = 'review';
@@ -626,7 +894,7 @@ export function reduce(prev: AppState, action: Action, now = Date.now(), nonce?:
     }
     case 'approveVerification': {
       const u = s.users[action.userId];
-      if (!u || u.role === 'client') return fail('Nothing to approve.');
+      if (!u || u.role === 'client' || u.role === 'rep') return fail('Nothing to approve.');
       if (u.verification.status !== 'review') fail('Submit the documents first.');
       u.verification.status = 'verified';
       alert(u.id, u.role === 'artisan' ? 'You are verified. Clients can now find you and you can bid on jobs.' : `${u.name} is verified.`);

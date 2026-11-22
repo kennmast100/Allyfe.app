@@ -5,7 +5,7 @@ import { useApp, type Route } from './store/store';
 import type { User } from './domain/types';
 import { Applied, ArtisanHome, ArtisanJob, ArtisanJobs, ProfileEdit, QuoteForm, Verify, useStartDayJobs } from './screens/artisan';
 import { BidReview, ClientHome, ClientJob, Discover, JobPosted, PostJob, ProProfile, Projects, RateJob } from './screens/client';
-import { OrderDetail, Orders, VendorHome } from './screens/vendor';
+import { OrderDetail, Orders, RepHome, RepRequest, RepRequests, VendorHome, VendorProfile, VendorRecords } from './screens/supply';
 import { Alerts, Comments, Composer, Feed, Me, Offline, OfflineBanner, Terms, Wallet } from './screens/shared';
 import { AuthFlow } from './screens/auth';
 
@@ -16,7 +16,7 @@ function Screen({ route, user }: { route: Route; user: User }) {
   const { state } = useApp();
   switch (route.name) {
     case 'home':
-      return user.role === 'client' ? <ClientHome /> : user.role === 'artisan' ? <ArtisanHome /> : <VendorHome />;
+      return user.role === 'client' ? <ClientHome /> : user.role === 'artisan' ? <ArtisanHome /> : user.role === 'rep' ? <RepHome /> : <VendorHome />;
     case 'discover':
       return <Discover category={route.category} />;
     case 'pro':
@@ -31,6 +31,7 @@ function Screen({ route, user }: { route: Route; user: User }) {
       const job = state.jobs.find((j) => j.id === route.jobId);
       if (!job) return <Projects />;
       if (user.role === 'vendor') return <OrderDetail jobId={job.id} />;
+      if (user.role === 'rep') return job.supply ? <RepRequest job={job} /> : <RepRequests />;
       return user.role === 'client' ? <ClientJob job={job} /> : <ArtisanJob job={job} />;
     }
     case 'bid':
@@ -51,6 +52,12 @@ function Screen({ route, user }: { route: Route; user: User }) {
       return <Orders tab={route.tab} key={route.tab} />;
     case 'order':
       return <OrderDetail jobId={route.jobId} />;
+    case 'supply':
+      return <RepRequests tab={route.tab} key={route.tab} />;
+    case 'vendors':
+      return <VendorRecords />;
+    case 'vendor':
+      return <VendorProfile id={route.id} />;
     case 'feed':
       return <Feed />;
     case 'composer':

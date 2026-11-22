@@ -84,7 +84,7 @@ describe('sign in with a code', () => {
 describe('sign up', () => {
   const artisan: SignupProfile = {
     role: 'artisan', name: 'Uche  Nnamdi', city: 'Port Harcourt', area: 'Rumuola', kind: 'individual', teamName: '', teamMembers: [],
-    trade: 'Plumber', categories: ['Plumbing'], years: 6, bio: 'Bathrooms and boreholes.', bank: { bankName: 'GTBank', accountNumber: '0123456789', accountName: 'Uche Nnamdi' },
+    trade: 'Plumber', categories: ['Plumber'], specialisations: ['Pipe installation'], years: 6, bio: 'Bathrooms and boreholes.', bank: { bankName: 'GTBank', accountNumber: '0123456789', accountName: 'Uche Nnamdi' },
   };
 
   it('gives a new number a one-time ticket, then creates the account', async () => {

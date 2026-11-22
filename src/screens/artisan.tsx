@@ -16,10 +16,12 @@ import {
   linesTotal,
   misdescribedSplit,
   rankArtisans,
+  serviceName,
 } from '../domain/rules';
 import type { Artisan, Job, QuoteLine } from '../domain/types';
 import { useApp } from '../store/store';
-import { History, JobDetails, JobHeader, MaterialsStatus, QuoteTable, SplitBox } from './client';
+import { History, JobDetails, JobHeader, QuoteTable, SplitBox } from './client';
+import { SupplyPanel } from './supply';
 
 const firstName = (n: string) => n.split(' ')[0];
 
@@ -337,20 +339,11 @@ export function ArtisanJob({ job: j }: { job: Job }) {
   let focus: React.ReactNode = null;
   switch (j.status) {
     case 'awarded':
-      focus = (
-        <div className="focus">
-          <h4>{j.materialsOrder?.status === 'accepted' ? `${state.users[j.materialsOrder.vendorId!].name} is buying the materials` : 'Waiting for a vendor to take the materials list'}</h4>
-          <p>You start on {dayLabel(j.scheduledDay!)}. We'll tell you when the materials reach the client.</p>
-        </div>
-      );
-      break;
     case 'materials_on_the_way':
       focus = (
         <div className="focus">
-          <h4>Materials are on the way</h4>
-          <p>
-            Waybill: {j.materialsOrder!.waybill}. You start on {dayLabel(j.scheduledDay!)}.
-          </p>
+          <h4>{j.supply?.plan && !j.supply.plan.artisanOkAt ? 'Please check the materials plan below' : 'Allyfe Supply is getting your materials'}</h4>
+          <p>You start on {dayLabel(j.scheduledDay!)}. We'll tell you when every item has reached the client.</p>
         </div>
       );
       break;
@@ -435,7 +428,7 @@ export function ArtisanJob({ job: j }: { job: Job }) {
       <Journey job={j} />
       <PersonRow user={client} sub={`Client · ${client.phone}`} />
       <div className="mt14">{focus}</div>
-      <MaterialsStatus job={j} />
+      <SupplyPanel job={j} viewer="artisan" />
       {myBid && (
         <>
           <h3>Your accepted quotation</h3>
@@ -485,7 +478,7 @@ export function QuoteForm({ jobId }: { jobId: string }) {
       <h3>Materials</h3>
       <div className="card">
         <label className="f mt0" htmlFor="mpick">
-          From the {j.category.toLowerCase()} list
+          From the {serviceName(j.category).toLowerCase()} materials list
         </label>
         <select id="mpick" value={pick} onChange={(e) => setPick(e.target.value)}>
           <option value="">Choose a material…</option>
@@ -563,6 +556,15 @@ export function QuoteForm({ jobId }: { jobId: string }) {
                 </button>
               </div>
               <b className="t13 nowrap w72 tr">{formatNaira(l.unitPrice * l.qty)}</b>
+              <input
+                className="spec-in"
+                type="text"
+                aria-label={`Specification for ${l.name}`}
+                placeholder="Spec: brand, size, colour…"
+                value={l.spec ?? ''}
+                onChange={(e) => setLines(lines.map((x, k) => (k === i ? { ...x, spec: e.target.value } : x)))}
+                maxLength={120}
+              />
             </div>
           ))}
         </div>
@@ -773,7 +775,7 @@ export function ProfileEdit() {
 /* ---------------- Verification (artisan, vendor) ---------------- */
 export function Verify() {
   const { user, dispatch } = useApp();
-  if (!user || user.role === 'client') return null;
+  if (!user || user.role === 'client' || user.role === 'rep') return null;
   const v = user.verification;
   const items = VERIFICATION_ITEMS[user.role];
   const locked = v.status === 'review' || v.status === 'verified';

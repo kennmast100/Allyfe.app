@@ -1,6 +1,19 @@
-export type Role = 'client' | 'artisan' | 'vendor';
+export type Role = 'client' | 'artisan' | 'vendor' | 'rep';
 export type Tier = 'Basic' | 'Pro' | 'Premium';
-export type Category = 'Home Renovation' | 'Interior Design' | 'Plumbing' | 'Electrical' | 'Painting';
+/** The 12 main job roles for the first launch. A job's category is the role it needs. */
+export type Category =
+  | 'Plumber'
+  | 'Woodworker'
+  | 'Electrician'
+  | 'Painter'
+  | 'Tiler'
+  | 'POP Installer'
+  | 'Welder'
+  | 'Aluminium Fabricator'
+  | 'Glass Installer'
+  | 'Cleaner'
+  | 'AC Technician'
+  | 'Builder';
 export type City = 'Port Harcourt' | 'Lagos' | 'Abuja' | 'Aba';
 
 export type AvatarSpec = {
@@ -41,6 +54,8 @@ export type Artisan = BaseUser & {
   teamName?: string;
   teamMembers: string[];
   apprentices: Apprentice[];
+  /** Specialisations within their main job role, e.g. "Kitchen cabinets". */
+  specialisations: string[];
   /** Artisans this one trained under. Filled in by the server, which keeps apprentices' numbers private. */
   mentors?: string[];
 };
@@ -49,10 +64,12 @@ export type Vendor = BaseUser & { role: 'vendor'; bank: string; verification: Ve
 
 /** Bank details collected at sign-up. Only the masked form is kept on the profile. */
 export type BankDetails = { bankName: string; accountNumber: string; accountName: string };
-export type User = Client | Artisan | Vendor;
+/** Allyfe market representative: staff who coordinate material sourcing in a city. Invitation only. */
+export type Rep = BaseUser & { role: 'rep'; bank: string; markets: string[] };
+export type User = Client | Artisan | Vendor | Rep;
 
 /** One line of an artisan's quotation: a catalogue item or a custom item. */
-export type QuoteLine = { key: string; name: string; unit: string; unitPrice: number; qty: number };
+export type QuoteLine = { key: string; name: string; unit: string; unitPrice: number; qty: number; spec?: string };
 
 export type BidStatus = 'pending' | 'accepted' | 'declined';
 export type Bid = {
@@ -66,18 +83,84 @@ export type Bid = {
   at: number;
 };
 
-export type OrderStatus = 'open' | 'accepted' | 'dispatched' | 'delivered' | 'cancelled';
-/** A delivery the client refused. The vendor must collect the goods (vendor contract). */
-export type MaterialRejection = { vendorId: string; reason: string; note: string; at: number; pickedUpAt?: number };
-export type MaterialOrder = {
+/* ---------------- Allyfe Supply: procurement ---------------- */
+
+/** One material line of a procurement request, tracked independently from sourcing to delivery. */
+export type SupplyLine = {
   id: string;
-  lines: QuoteLine[];
-  total: number;
-  status: OrderStatus;
-  vendorId?: string;
-  waybill?: string;
+  key: string;
+  name: string;
+  unit: string;
+  /** What the artisan specified (brand, size, colour, finish…). */
+  spec: string;
+  qty: number;
+  /** The price the artisan quoted with; the client paid this into Allyfe. */
+  budgetPrice: number;
+  /** Quantity received and accepted by the client so far. */
+  delivered: number;
+};
+
+/** A vendor's offer for some or all lines. `substitute` is set when they offer something other than the spec. */
+export type OfferItem = { lineId: string; qty: number; unitPrice: number; substitute?: string };
+export type SupplyOffer = {
+  id: string;
+  vendorId: string;
+  items: OfferItem[];
+  deliveryFee: number;
+  deliveryDays: number;
+  note: string;
+  status: 'active' | 'withdrawn';
   at: number;
-  rejections: MaterialRejection[];
+};
+
+export type Allocation = { lineId: string; vendorId: string; offerId: string; qty: number; unitPrice: number; substitute?: string };
+
+/** The representative's recommended allocation, waiting for approvals. */
+export type SupplyPlan = {
+  kind: 'single' | 'combined';
+  allocations: Allocation[];
+  materials: number;
+  delivery: number;
+  total: number;
+  /** How much more than the money already held for materials; needs the client's approval. */
+  extra: number;
+  substitutions: number;
+  needsClient: boolean;
+  recommendedAt: number;
+  artisanOkAt?: number;
+  clientOkAt?: number;
+};
+
+export type POLine = { lineId: string; name: string; unit: string; qty: number; unitPrice: number; substitute?: string; confirmed?: number; received?: number };
+export type POStatus = 'issued' | 'confirmed' | 'declined' | 'dispatched' | 'received' | 'refused' | 'cancelled';
+export type PurchaseOrder = {
+  id: string;
+  ref: string;
+  vendorId: string;
+  lines: POLine[];
+  deliveryFee: number;
+  status: POStatus;
+  waybill?: string;
+  paid?: number;
+  /** Set when the client refuses the delivery; the vendor must collect the goods. */
+  refusal?: { reason: string; note: string; at: number; pickedUpAt?: number };
+  at: number;
+};
+
+export type SupplyStatus = 'sourcing' | 'approval' | 'ordering' | 'delivering' | 'complete' | 'cancelled';
+/** The procurement request: the central record of Allyfe Supply for one job. */
+export type Supply = {
+  id: string;
+  ref: string;
+  repId?: string;
+  lines: SupplyLine[];
+  offers: SupplyOffer[];
+  plan?: SupplyPlan;
+  orders: PurchaseOrder[];
+  status: SupplyStatus;
+  /** Savings returned to the client when every line is delivered. */
+  refunded?: number;
+  at: number;
 };
 
 export type JobStatus =
@@ -120,7 +203,10 @@ export type Job = {
   serviceFee?: number;
   /** Money Allyfe is holding for this job right now. */
   escrow: number;
-  materialsOrder?: MaterialOrder;
+  /** Allyfe Supply procurement request, created when the client accepts a quotation with materials. */
+  supply?: Supply;
+  /** Optional specialisation within the job role, e.g. "Kitchen cabinets". */
+  specialisation?: string;
   /** Everything vendors have already delivered to the client for this job. */
   deliveredMaterials: QuoteLine[];
   /** Artisans who didn't show up; they can't bid on this job again. */

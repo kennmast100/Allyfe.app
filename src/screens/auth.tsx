@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { Avatar, CategoryIcon, Icon, MARK_SVG, Picture } from '../components/art';
 import { MediaInput, Notice } from '../components/ui';
 import type { SignupProfile } from '../domain/actions';
-import { BANKS, CATEGORIES, CITIES, TRADES, normalizePhone } from '../domain/rules';
+import { BANKS, CATEGORIES, CITIES, JOB_ROLES, normalizePhone, roleInfo, serviceName } from '../domain/rules';
 import { DEMO_ACCOUNTS } from '../domain/seed';
 import type { BankDetails, Category, City } from '../domain/types';
 import { useApp } from '../store/store';
@@ -258,8 +258,9 @@ type Draft = {
   kind: 'individual' | 'team';
   teamName: string;
   teamMembers: string[];
-  trade: string;
+  trade: Category | '';
   categories: Category[];
+  specialisations: string[];
   years: string;
   bio: string;
   shopName: string;
@@ -277,7 +278,7 @@ function SignUp({ onBack, onSignin }: { onBack: () => void; onSignin: () => void
   const [err, setErr] = useState('');
   const [busy, setBusy] = useState(false);
   const [d, setD] = useState<Draft>({
-    name: '', city: 'Port Harcourt', area: '', kind: 'individual', teamName: '', teamMembers: ['', ''], trade: '', categories: [], years: '', bio: '',
+    name: '', city: 'Port Harcourt', area: '', kind: 'individual', teamName: '', teamMembers: ['', ''], trade: '', categories: [], specialisations: [], years: '', bio: '',
     shopName: '', market: '', bank: { bankName: '', accountNumber: '', accountName: '' }, agree: false,
   });
   const set = (p: Partial<Draft>) => (setD({ ...d, ...p }), setErr(''));
@@ -307,8 +308,7 @@ function SignUp({ onBack, onSignin }: { onBack: () => void; onSignin: () => void
     }
     if (!d.area.trim()) return 'Enter your area or estate.';
     if (role === 'artisan') {
-      if (!d.trade) return 'Choose your trade.';
-      if (!d.categories.length) return 'Choose at least one kind of job you take.';
+      if (!d.trade) return 'Choose your main job role.';
       if (d.years === '' || !(Number(d.years) >= 0)) return 'Enter your years of experience.';
       if (d.kind === 'team' && !d.teamName.trim()) return 'Give your team a name.';
       if (d.kind === 'team' && d.teamMembers.filter((m) => m.trim()).length < 2) return 'A team needs at least 2 members.';
@@ -323,7 +323,7 @@ function SignUp({ onBack, onSignin }: { onBack: () => void; onSignin: () => void
       role === 'client'
         ? { role, name: d.name, city: d.city, area: d.area, photo: d.photo }
         : role === 'artisan'
-          ? { role, name: d.name, city: d.city, area: d.area, photo: d.photo, kind: d.kind, teamName: d.teamName, teamMembers: d.teamMembers, trade: d.trade, categories: d.categories, years: Number(d.years), bio: d.bio, bank }
+          ? { role, name: d.name, city: d.city, area: d.area, photo: d.photo, kind: d.kind, teamName: d.teamName, teamMembers: d.teamMembers, trade: d.trade as Category, categories: d.categories, specialisations: d.specialisations, years: Number(d.years), bio: d.bio, bank }
           : { role: 'vendor', name: d.shopName, ownerName: d.name, market: d.market, city: d.city, area: d.area, photo: d.photo, categories: d.categories, bank };
     setBusy(true);
     const r = await auth.register(ticket!, profile);
@@ -444,31 +444,55 @@ function SignUp({ onBack, onSignin }: { onBack: () => void; onSignin: () => void
           {role === 'artisan' && (
             <>
               <label className="f" htmlFor="trade">
-                Your trade
+                Your main job role
               </label>
               <select
                 id="trade"
                 value={d.trade}
                 onChange={(e) => {
-                  const t = TRADES.find((x) => x.trade === e.target.value);
-                  set({ trade: e.target.value, categories: t ? t.categories : d.categories });
+                  const t = e.target.value as Category;
+                  set({ trade: t, categories: t ? [t, ...d.categories.filter((c) => c !== t)] : d.categories, specialisations: [] });
                 }}
               >
                 <option value="">Choose…</option>
-                {TRADES.map((t) => (
-                  <option key={t.trade}>{t.trade}</option>
+                {JOB_ROLES.map((r) => (
+                  <option key={r.role} value={r.role}>
+                    {r.role}: {r.specialisations.slice(0, 2).join(', ').toLowerCase()}…
+                  </option>
                 ))}
               </select>
+              {d.trade && (
+                <>
+                  <label className="f">
+                    What do you do best? <em>(pick any)</em>
+                  </label>
+                  <div className="chip-wrap">
+                    {d.categories
+                      .flatMap((c) => roleInfo(c).specialisations)
+                      .filter((x, i, a) => a.indexOf(x) === i)
+                      .map((sp) => (
+                        <button
+                          key={sp}
+                          className={'chip-btn' + (d.specialisations.includes(sp) ? ' on' : '')}
+                          aria-pressed={d.specialisations.includes(sp)}
+                          onClick={() => set({ specialisations: d.specialisations.includes(sp) ? d.specialisations.filter((x) => x !== sp) : [...d.specialisations, sp] })}
+                        >
+                          {sp}
+                        </button>
+                      ))}
+                  </div>
+                </>
+              )}
             </>
           )}
-          {role !== 'client' && (
+          {role !== 'client' && (role === 'vendor' || d.trade) && (
             <>
-              <label className="f">{role === 'artisan' ? 'Jobs you take' : 'Materials you sell'}</label>
+              <label className="f">{role === 'artisan' ? 'Other job roles you also take' : 'Materials you sell'} {role === 'artisan' && <em>(optional)</em>}</label>
               <div className="cat-pick">
-                {CATEGORIES.map((c) => (
+                {CATEGORIES.filter((c) => role === 'vendor' || c !== d.trade).map((c) => (
                   <button key={c} className={d.categories.includes(c) ? 'on' : ''} onClick={() => toggleCat(c)} aria-pressed={d.categories.includes(c)}>
                     <CategoryIcon cat={c} />
-                    <span>{c}</span>
+                    <span>{role === 'vendor' ? serviceName(c) : c}</span>
                   </button>
                 ))}
               </div>

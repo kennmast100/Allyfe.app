@@ -4,11 +4,11 @@ import { BackBar, Calendar, Empty, Journey, MediaInput, Notice, PersonRow, SimBu
 import { isVideo } from '../components/media';
 import type { JobDraft } from '../domain/actions';
 import { mentorsOf } from '../domain/view';
+import { SupplyPanel } from './supply';
 import {
   ATTITUDE_OPTIONS,
   CATEGORIES,
   CLOSED_STATUSES,
-  MATERIAL_REJECT_REASONS,
   MIN_DESCRIPTION,
   TIERS,
   TIER_FEATURES,
@@ -24,6 +24,8 @@ import {
   misdescribedSplit,
   optionStars,
   rankArtisans,
+  roleInfo,
+  serviceName,
 } from '../domain/rules';
 import type { Artisan, Bid, Category, Job, QuoteLine, Tier } from '../domain/types';
 import { useApp } from '../store/store';
@@ -244,6 +246,15 @@ export function ProProfile({ id }: { id: string }) {
       )}
       <h3>About</h3>
       <p className="t13 m0">{p.bio}</p>
+      {p.specialisations.length > 0 && (
+        <div className="chips mt8">
+          {p.specialisations.map((x) => (
+            <span className="chip lg" key={x}>
+              {x}
+            </span>
+          ))}
+        </div>
+      )}
       {p.kind === 'team' && (
         <>
           <h3>The team ({p.teamMembers.length})</h3>
@@ -329,11 +340,18 @@ export function ProProfile({ id }: { id: string }) {
 
 /* ---------------- Post a job ---------------- */
 const PROMPTS: Record<Category, string> = {
-  'Home Renovation': 'Sizes (length × height), materials you want (e.g. plywood or MDF), what must be removed first, and the wall type.',
-  'Interior Design': 'Room size, ceiling height, the finish you want, number of lights, and anything that must be removed first.',
-  Plumbing: 'What is leaking or broken, where it is (kitchen, upstairs bathroom…), pipe size if you know it, and how long it has been happening.',
-  Electrical: 'What stopped working, how many sockets or lights, whether the breaker trips, and if you have a generator or inverter.',
-  Painting: 'Number of rooms, wall height, inside or outside, colours you want, and whether old paint is peeling.',
+  Plumber: 'What is leaking or broken, where it is (kitchen, upstairs bathroom…), pipe size if you know it, and how long it has been happening.',
+  Woodworker: 'What you want made or fixed, sizes (length × height × depth), the wood or board you prefer, and the finish.',
+  Electrician: 'What stopped working, how many sockets or lights, whether the breaker trips, and if you have a generator or inverter.',
+  Painter: 'Number of rooms, wall height, inside or outside, colours you want, and whether old paint is peeling.',
+  Tiler: 'Floor or wall, the area in m² (length × width), the tile size and colour you want, and whether old tiles must be removed.',
+  'POP Installer': 'Room size, ceiling height, the design you want, number of lights, and anything that must be removed first.',
+  Welder: 'What you want made (gate, burglary proof, railing…), sizes, the pipe or bar you prefer, and the paint colour.',
+  'Aluminium Fabricator': 'How many windows, doors or partitions, their sizes, sliding or casement, and the frame and glass colour.',
+  'Glass Installer': 'What you need (shower cubicle, mirror, glass door…), sizes, glass thickness or type, and the hardware finish.',
+  Cleaner: 'The type of cleaning, number of rooms or m², any after-building dust or paint, and whether cleaning supplies are needed.',
+  'AC Technician': 'Installation, servicing or repair, how many units, their horsepower and brand, and what is wrong.',
+  Builder: 'What you want built or renovated, sizes, the stage it is at now, and whether you have drawings.',
 };
 
 export function PostJob({ artisanId, category }: { artisanId?: string; category?: string }) {
@@ -395,6 +413,7 @@ export function PostJob({ artisanId, category }: { artisanId?: string; category?
               >
                 <CategoryIcon cat={c} />
                 <b>{c}</b>
+                <span className="small">{roleInfo(c).specialisations.slice(0, 2).join(', ')}</span>
               </button>
             ))}
           </div>
@@ -417,6 +436,16 @@ export function PostJob({ artisanId, category }: { artisanId?: string; category?
             <button className="link ml-auto" onClick={() => setStep(1)}>
               Change
             </button>
+          </div>
+          <label className="f">
+            What kind of {serviceName(d.category).toLowerCase()} work? <em>(optional)</em>
+          </label>
+          <div className="chip-wrap">
+            {roleInfo(d.category).specialisations.map((sp) => (
+              <button key={sp} className={'chip-btn' + (d.specialisation === sp ? ' on' : '')} aria-pressed={d.specialisation === sp} onClick={() => set({ specialisation: d.specialisation === sp ? undefined : sp })}>
+                {sp}
+              </button>
+            ))}
           </div>
           <label className="f" htmlFor="ftitle">
             Job title
@@ -488,7 +517,7 @@ export function PostJob({ artisanId, category }: { artisanId?: string; category?
               </button>
             ))}
           </div>
-          {!invitedOk && invited && <Notice>{invited.name} can't take a {d.tier} {d.category.toLowerCase()} job. Your job will go to every qualifying artisan instead.</Notice>}
+          {!invitedOk && invited && <Notice>{invited.name} can't take a {d.tier} {serviceName(d.category).toLowerCase()} job. Your job will go to every qualifying artisan instead.</Notice>}
           <div className="card how-pay mt14">
             <b className="t14">How payment works</b>
             <ol className="steps mt8">
@@ -547,7 +576,7 @@ export function JobPosted({ jobId }: { jobId: string }) {
         <Icon name="check" size={40} />
       </span>
       <h2>Job posted</h2>
-      <p className="sub">{invited ? `We've asked ${invited.name} for a quotation.` : `Verified ${j.category.toLowerCase()} artisans in ${j.city} have been notified.`}</p>
+      <p className="sub">{invited ? `We've asked ${invited.name} for a quotation.` : `Verified ${j.category.toLowerCase()}s in ${j.city} have been notified.`}</p>
       <div className="card summary-lite">
         <b>{j.title}</b>
         <div className="small">
@@ -760,83 +789,6 @@ export function SplitBox({ split, job }: { split: ReturnType<typeof completionSp
   );
 }
 
-export function MaterialsStatus({ job: j }: { job: Job }) {
-  const { state } = useApp();
-  const o = j.materialsOrder;
-  if (!o) return null;
-  const v = o.vendorId ? state.users[o.vendorId] : null;
-  return (
-    <div className="card mt12">
-      <div className="between">
-        <b className="t13">Materials · {formatNaira(o.total)}</b>
-        <span className={'tag xs ' + (o.status === 'delivered' ? 'good' : o.status === 'cancelled' ? 'grey' : 'blue')}>
-          {o.status === 'open' ? 'Waiting for a vendor' : o.status === 'accepted' ? 'Vendor buying' : o.status === 'dispatched' ? 'On the way' : o.status === 'delivered' ? 'Delivered' : 'Cancelled'}
-        </span>
-      </div>
-      {v && <div className="small mt4">Supplier: {v.name}</div>}
-      {o.waybill && <div className="small">Waybill: {o.waybill}</div>}
-      {o.rejections.map((r, i) => (
-        <div className="small reject-line" key={i}>
-          ✕ Refused delivery from {state.users[r.vendorId]?.name}: {r.reason}
-          {r.note ? ` (“${r.note}”)` : ''} · {r.pickedUpAt ? 'collected by vendor' : 'waiting for vendor to collect'}
-        </div>
-      ))}
-      <details className="mt6">
-        <summary className="small">See the {o.lines.length} item{o.lines.length === 1 ? '' : 's'}</summary>
-        <QuoteTable lines={o.lines} showTotal={false} />
-      </details>
-    </div>
-  );
-}
-
-/** Lets the client refuse a delivery with a reason. The vendor is told to come and collect it. */
-function RejectMaterials({ job: j }: { job: Job }) {
-  const { state, dispatch } = useApp();
-  const [open, setOpen] = useState(false);
-  const [reason, setReason] = useState('');
-  const [note, setNote] = useState('');
-  const vendor = state.users[j.materialsOrder!.vendorId!];
-  if (!open)
-    return (
-      <button className="btn concern" onClick={() => setOpen(true)}>
-        I'm not happy with the materials
-      </button>
-    );
-  return (
-    <div className="card reject-box">
-      <b className="t14">Refuse the materials</b>
-      <p className="small m0">
-        {vendor.name} will be told the delivery was not accepted and must come back to collect it. They are not paid, and the order goes back out so the right materials can be delivered.
-      </p>
-      <label className="f" htmlFor="rreason">
-        What's wrong?
-      </label>
-      <select id="rreason" value={reason} onChange={(e) => setReason(e.target.value)}>
-        <option value="">Choose a reason…</option>
-        {MATERIAL_REJECT_REASONS.map((r) => (
-          <option key={r}>{r}</option>
-        ))}
-      </select>
-      <label className="f" htmlFor="rnote">
-        Details {reason !== 'Other' && <em>(optional)</em>}
-      </label>
-      <textarea id="rnote" placeholder="e.g. The tap is plastic, not chrome. Only 2 of 3 tapes came." value={note} onChange={(e) => setNote(e.target.value)} maxLength={300} />
-      <button
-        className="btn concern mt10"
-        disabled={!reason}
-        onClick={() => {
-          if (dispatch({ type: 'rejectMaterials', jobId: j.id, reason, note }, `${vendor.name} has been told to collect the materials.`)) setOpen(false);
-        }}
-      >
-        Refuse materials and notify vendor
-      </button>
-      <button className="link small mt8" onClick={() => setOpen(false)}>
-        Cancel
-      </button>
-    </div>
-  );
-}
-
 /* ---------------- Client job detail ---------------- */
 export function ClientJob({ job: j }: { job: Job }) {
   const { state, dispatch, go } = useApp();
@@ -857,7 +809,7 @@ export function ClientJob({ job: j }: { job: Job }) {
               ? 'Compare the materials, service fees and ratings. You pay only when you accept one.'
               : j.invitedArtisanId
                 ? `${state.users[j.invitedArtisanId].name} has been asked for a quotation.`
-                : `Verified ${j.category.toLowerCase()} artisans in ${j.city} have been notified.`}
+                : `Verified ${j.category.toLowerCase()}s in ${j.city} have been notified.`}
             {j.escrow > 0 && ` ${formatNaira(j.escrow)} from your earlier booking is still held and counts toward the new bid.`}
           </p>
           {pending.map((b) => (
@@ -872,38 +824,26 @@ export function ClientJob({ job: j }: { job: Job }) {
       );
       break;
     case 'awarded':
+    case 'materials_on_the_way': {
+      const anyPaid = j.supply?.orders.some((o) => o.status === 'received');
       focus = (
-        <div className="focus">
-          <h4>
-            {j.materialsOrder?.status === 'accepted'
-              ? `${state.users[j.materialsOrder.vendorId!].name} is buying your materials`
-              : j.materialsOrder?.rejections.length
-                ? `You refused the last delivery. Finding a vendor again`
-                : `Finding a vendor in ${j.city}`}
-          </h4>
+        <div className={'focus' + (j.status === 'materials_on_the_way' ? ' warn' : '')}>
+          <h4>{j.status === 'materials_on_the_way' ? 'Materials are on the way' : 'Allyfe Supply is sourcing your materials'}</h4>
           <p>
-            The materials list has gone to market vendors in {j.city}. They deliver to your home before {af} comes on <b>{dayLabel(j.scheduledDay!)}</b>.
+            {j.status === 'materials_on_the_way'
+              ? 'Check every item when it arrives, then confirm what you received below. Vendors are paid only for what you accept.'
+              : `Registered vendors in ${j.city} are competing to supply the materials. Everything arrives before ${af} comes on `}
+            {j.status !== 'materials_on_the_way' && <b>{dayLabel(j.scheduledDay!)}</b>}
           </p>
-          <button className="btn secondary" onClick={() => confirm('Cancel and get a full refund? Nothing has been delivered yet.') && dispatch({ type: 'requestRefund', jobId: j.id }, 'Cancelled. Your money is back in your wallet.')}>
-            Cancel and get a full refund
-          </button>
+          {j.status === 'awarded' && (
+            <button className="btn secondary" onClick={() => confirm(anyPaid ? 'Cancel and refund everything not yet delivered?' : 'Cancel and get a full refund? Nothing has been delivered yet.') && dispatch({ type: 'requestRefund', jobId: j.id }, 'Cancelled. Your money is back in your wallet.')}>
+              {anyPaid ? 'Cancel and refund the rest' : 'Cancel and get a full refund'}
+            </button>
+          )}
         </div>
       );
       break;
-    case 'materials_on_the_way':
-      focus = (
-        <div className="focus warn">
-          <h4>Materials are on the way</h4>
-          <p>
-            {state.users[j.materialsOrder!.vendorId!].name} sent them: <b>{j.materialsOrder!.waybill}</b>. Check every item when they arrive. The vendor is paid when you confirm.
-          </p>
-          <button className="btn primary" onClick={() => confirm('Have you received and checked all the materials? The vendor will be paid.') && dispatch({ type: 'confirmMaterials', jobId: j.id }, `${af} has been told to come and start work.`)}>
-            I've received the materials
-          </button>
-          <RejectMaterials job={j} />
-        </div>
-      );
-      break;
+    }
     case 'ready':
       focus = (
         <div className="focus">
@@ -1065,7 +1005,7 @@ export function ClientJob({ job: j }: { job: Job }) {
       <Journey job={j} />
       {a && <PersonRow user={a} sub={<><Stars rating={a.rating} count={a.ratingCount} /> · {a.trade}</>} onClick={() => go({ name: 'pro', id: a.id })} />}
       <div className="mt14">{focus}</div>
-      <MaterialsStatus job={j} />
+      <SupplyPanel job={j} viewer="client" />
       {accepted && j.status !== 'open' && (
         <>
           <h3>Accepted quotation</h3>
