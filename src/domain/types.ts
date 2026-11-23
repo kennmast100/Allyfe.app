@@ -65,10 +65,15 @@ export type Vendor = BaseUser & { role: 'vendor'; bank: string; verification: Ve
 /** Bank details collected at sign-up. Only the masked form is kept on the profile. */
 export type BankDetails = { bankName: string; accountNumber: string; accountName: string };
 /** Allyfe market representative: staff who coordinate material sourcing in a city. Invitation only. */
-export type Rep = BaseUser & { role: 'rep'; bank: string; markets: string[] };
+/** Allyfe market representative: the only link between clients and vendors. Rated by clients after each job. */
+export type Rep = BaseUser & { role: 'rep'; bank: string; markets: string[]; rating: number; ratingCount: number };
 export type User = Client | Artisan | Vendor | Rep;
 
-/** One line of an artisan's quotation: a catalogue item or a custom item. */
+/**
+ * One line of an artisan's quotation: a catalogue item or a custom item.
+ * Artisans give the quantity and spec only; market vendors price materials, so `unitPrice` is 0 on a quote
+ * and only filled in on delivered materials (what was actually paid).
+ */
 export type QuoteLine = { key: string; name: string; unit: string; unitPrice: number; qty: number; spec?: string };
 
 export type BidStatus = 'pending' | 'accepted' | 'declined';
@@ -94,8 +99,6 @@ export type SupplyLine = {
   /** What the artisan specified (brand, size, colour, finish…). */
   spec: string;
   qty: number;
-  /** The price the artisan quoted with; the client paid this into Allyfe. */
-  budgetPrice: number;
   /** Quantity received and accepted by the client so far. */
   delivered: number;
 };
@@ -122,12 +125,14 @@ export type SupplyPlan = {
   materials: number;
   delivery: number;
   total: number;
-  /** How much more than the money already held for materials; needs the client's approval. */
-  extra: number;
+  /** What the client pays now: plan total plus any service fee not yet held, minus money Allyfe already holds for this job. */
+  due: number;
   substitutions: number;
-  needsClient: boolean;
+  /** Substitutes need the artisan to confirm they are technically suitable before the client is asked to pay. */
+  needsArtisan: boolean;
   recommendedAt: number;
   artisanOkAt?: number;
+  /** When the client approved and paid; purchase orders go out at the same moment. */
   clientOkAt?: number;
 };
 
@@ -160,8 +165,14 @@ export type Supply = {
   status: SupplyStatus;
   /** Savings returned to the client when every line is delivered. */
   refunded?: number;
+  /** Two lines of communication: client ↔ representative ('client') and representative ↔ each vendor (thread = vendor id). Clients and vendors never message each other. */
+  messages: SupplyMessage[];
+  /** The client's review of how smoothly the representative handled the supply; used for the rep's appraisal. */
+  repRating?: { stars: number; text: string; at: number };
   at: number;
 };
+
+export type SupplyMessage = { id: string; thread: string; from: string; text: string; at: number };
 
 export type JobStatus =
   | 'open' // collecting bids

@@ -23,8 +23,22 @@ const reviewStub = (j: Job): Job => ({
   history: [], rating: j.rating, createdAt: j.createdAt,
 });
 
-/** Clients and artisans see the approved plan and the orders, not every vendor's offer. */
-const withoutOffers = (sp?: Supply): Supply | undefined => sp && { ...sp, offers: [] };
+/**
+ * Clients and artisans see the representative's quotation and the orders, not every vendor's offer.
+ * Clients see only their own conversation with the representative; artisans see none.
+ */
+const withoutOffers = (sp: Supply | undefined, thread?: string): Supply | undefined =>
+  sp && {
+    ...sp,
+    // Only what the quotation already shows: the chosen items of the offers in the representative's plan
+    // (so the client's phone can check and pay it), never other offers or unchosen items.
+    offers: sp.plan
+      ? sp.offers
+          .filter((o) => sp.plan!.allocations.some((a) => a.offerId === o.id))
+          .map((o) => ({ ...o, note: '', items: o.items.filter((i) => sp.plan!.allocations.some((a) => a.offerId === o.id && a.lineId === i.lineId)) }))
+      : [],
+    messages: thread ? sp.messages.filter((m) => m.thread === thread) : [],
+  };
 
 /** A live supply request a vendor could still offer on. */
 const openForOffers = (j: Job) => {
@@ -45,14 +59,14 @@ export function viewFor(state: AppState, userId: string | null): AppState {
   const jobs: Job[] = [];
   const supplyPeople = (sp?: Supply) => {
     if (!sp) return;
+    // Clients and artisans reach the representative, never the vendors directly.
     if (sp.repId) phoneOk.add(sp.repId);
-    sp.orders.forEach((o) => phoneOk.add(o.vendorId));
   };
 
   for (const j of state.jobs) {
     const sp = j.supply;
     if (me?.role === 'client' && j.clientId === me.id) {
-      jobs.push({ ...j, supply: withoutOffers(sp) });
+      jobs.push({ ...j, supply: withoutOffers(sp, 'client') });
       if (j.artisanId) phoneOk.add(j.artisanId);
       supplyPeople(sp);
       continue;
@@ -86,11 +100,13 @@ export function viewFor(state: AppState, userId: string | null): AppState {
           supply: {
             ...sp,
             offers: sp.offers.filter((o) => o.vendorId === me.id),
+            messages: sp.messages.filter((m) => m.thread === me.id),
+            repRating: undefined,
             orders: sp.orders.map((o) => (o.vendorId === me.id ? o : { id: o.id, ref: '', vendorId: '', status: o.status, at: o.at, deliveryFee: 0, lines: o.lines.map((l) => ({ ...l, name: '', unitPrice: 0, substitute: undefined })) })),
             plan: undefined,
           },
         });
-        if (delivering) phoneOk.add(j.clientId);
+        // Vendors deal only with the representative: no client phone number, ever.
         if (sp.repId) phoneOk.add(sp.repId);
         continue;
       }
@@ -206,8 +222,10 @@ export function repQueue(state: AppState, repId: string) {
     const sp = j.supply!;
     if (sp.status === 'cancelled' || sp.status === 'complete') return false;
     const pending = Object.values(supplyNeed(sp)).some((q) => q > 0);
-    const readyToAuthorize = !!sp.plan && !!sp.plan.artisanOkAt && (!sp.plan.needsClient || !!sp.plan.clientOkAt);
-    return readyToAuthorize || (!sp.plan && pending && sp.offers.some((o) => o.status === 'active'));
+    const threads = new Map<string, string>();
+    for (const m of sp.messages) threads.set(m.thread, m.from);
+    const unanswered = [...threads.values()].some((from) => from !== sp.repId);
+    return unanswered || (!sp.plan && pending && sp.offers.some((o) => o.status === 'active'));
   };
   const active = all.filter((j) => !['complete', 'cancelled'].includes(j.supply!.status));
   return { all, active, action: active.filter(needsRep), done: all.filter((j) => j.supply!.status === 'complete') };

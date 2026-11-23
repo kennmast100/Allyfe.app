@@ -63,7 +63,7 @@ export function seedState(now = Date.now()): AppState {
     { id: 'v-tradefair', role: 'vendor', city: 'Lagos', market: 'Trade Fair Complex', ownerName: 'Bisi Ade', categories: ['Plumber', 'Electrician', 'Tiler'], name: 'Trade Fair Supplies', phone: '0803 000 1616', area: 'Ojo, Lagos', bank: 'GTBank •••• 1616', avatar: { bg: '#EDE9FE', skin: '#7A4A2A', hair: 'short', shirt: '#6D28D9' }, verification: vendorDocs },
   ];
   const reps: Rep[] = [
-    { id: 'r-ifeoma', role: 'rep', city: 'Port Harcourt', name: 'Ifeoma Briggs', phone: '0803 000 1818', area: 'Mile 3, Port Harcourt', bank: '', markets: ['Mile 3 Market', 'Oil Mill Market', 'Rumuokoro Market'], avatar: { bg: '#FEF3C7', skin: '#6B3F22', hair: 'long', shirt: '#F59E0B' } },
+    { id: 'r-ifeoma', role: 'rep', city: 'Port Harcourt', name: 'Ifeoma Briggs', phone: '0803 000 1818', area: 'Mile 3, Port Harcourt', bank: '', markets: ['Mile 3 Market', 'Oil Mill Market', 'Rumuokoro Market'], rating: 4.7, ratingCount: 9, avatar: { bg: '#FEF3C7', skin: '#6B3F22', hair: 'long', shirt: '#F59E0B' } },
   ];
   const users: Record<string, User> = {};
   [...clients, ...artisans, ...vendors, ...reps].forEach((u) => (users[u.id] = u));
@@ -138,7 +138,7 @@ export function seedState(now = Date.now()): AppState {
   };
   const line = (cat: Category, key: string, qty: number, spec = ''): QuoteLine => {
     const m = MATERIALS[cat].find((x) => x.key === key)!;
-    return { key: m.key, name: m.name, unit: m.unit, unitPrice: m.price, qty, spec };
+    return { key: m.key, name: m.name, unit: m.unit, unitPrice: 0, qty, spec };
   };
   const J = (id: string) => s.jobs.find((j) => j.id === id)!;
   /** Posts a job, gets the artisan's bid and has the client accept it. Returns the stable demo id. */
@@ -162,6 +162,7 @@ export function seedState(now = Date.now()): AppState {
       }),
     }, at);
   const REP = 'r-ifeoma';
+  const say = (userId: string, jobId: string, thread: string, text: string, at: number) => play(userId, { type: 'sendSupplyMessage', jobId, thread, text }, at);
   const lastPO = (jobId: string) => J(jobId).supply!.orders[J(jobId).supply!.orders.length - 1];
 
   // 6. Woodwork, delivered and paid: the materials are at Ada's home.
@@ -169,21 +170,22 @@ export function seedState(now = Date.now()): AppState {
   awarded({ id: 'j-v4', clientId: 'c-ada', addr: '7 Ikwerre Road, D-Line', artisanId: 'a-emeka', title: 'Kitchen wall units', category: 'Woodworker', tier: 'Pro', desc: 'Build and fit 3 wall units above the worktop, 2.4 m in total, MDF with soft-close doors. Walls are concrete.', lines: [line('Woodworker', 'hr-mdf', 3, '18 mm, white melamine'), line('Woodworker', 'hr-hinge', 6, 'Clip-on, 110°'), line('Woodworker', 'hr-handle', 3, 'Brushed steel, 128 mm'), line('Woodworker', 'hr-screws', 1)], fee: 70000, dayOffset: 2, at: t4, media: ['cabinet'] });
   offer('j-v4', 'v-mile3', [['hr-mdf', 'all', 24500], ['hr-hinge', 'all', 3200], ['hr-handle', 'all', 1200], ['hr-screws', 'all', 1800]], 3000, t4 + 4 * H, 'All in stock.');
   play(REP, { type: 'recommendPlan', jobId: 'j-v4', kind: 'single', vendorId: 'v-mile3' }, t4 + 6 * H);
-  play('a-emeka', { type: 'artisanReviewSupply', jobId: 'j-v4', ok: true, note: '' }, t4 + 7 * H);
-  play(REP, { type: 'authorizeSupply', jobId: 'j-v4' }, t4 + 8 * H);
+  play('c-ada', { type: 'clientReviewSupply', jobId: 'j-v4', ok: true, note: '' }, t4 + 8 * H);
   play('v-mile3', { type: 'confirmPO', jobId: 'j-v4', poId: lastPO('j-v4').id, confirmed: {} }, t4 + 9 * H);
   play('v-mile3', { type: 'dispatchPO', jobId: 'j-v4', poId: lastPO('j-v4').id, waybill: 'GIG waybill 7712' }, t4 + 20 * H);
   play('c-ada', { type: 'receivePO', jobId: 'j-v4', poId: lastPO('j-v4').id, received: {} }, t4 + 26 * H);
+  play('c-ada', { type: 'rateRep', jobId: 'j-v4', stars: 5, text: 'Ifeoma kept me updated and the boards came the next day.' }, t4 + 27 * H);
 
   // 4. Painting: Mile 3's delivery is on the way to Kenneth (he can receive or refuse it).
   const t3 = now - 36 * H;
   awarded({ id: 'j-v3', clientId: 'c-kenneth', addr: '12 Woji Road, GRA Phase 2', artisanId: 'a-blessing', title: 'Repaint living room and dining', category: 'Painter', tier: 'Pro', desc: 'Living and dining area, about 60 m² of wall, 3 m high. Light peeling near the window. Colour: soft green walls with white trim.', lines: [line('Painter', 'pa-emul', 2, 'Soft green, matt'), line('Painter', 'pa-gloss', 1, 'White'), line('Painter', 'pa-putty', 1), line('Painter', 'pa-roller', 2), line('Painter', 'pa-mask', 3)], fee: 60000, dayOffset: 0, at: t3, media: ['room'] });
   offer('j-v3', 'v-mile3', [['pa-emul', 'all', 34000], ['pa-gloss', 'all', 12000], ['pa-putty', 'all', 8500], ['pa-roller', 'all', 3500], ['pa-mask', 'all', 800]], 2500, t3 + 3 * H, 'Colour mixed at the shop.');
   play(REP, { type: 'recommendPlan', jobId: 'j-v3', kind: 'single', vendorId: 'v-mile3' }, t3 + 5 * H);
-  play('a-blessing', { type: 'artisanReviewSupply', jobId: 'j-v3', ok: true, note: '' }, t3 + 6 * H);
-  play(REP, { type: 'authorizeSupply', jobId: 'j-v3' }, t3 + 7 * H);
+  play('c-kenneth', { type: 'clientReviewSupply', jobId: 'j-v3', ok: true, note: '' }, t3 + 7 * H);
   play('v-mile3', { type: 'confirmPO', jobId: 'j-v3', poId: lastPO('j-v3').id, confirmed: {} }, t3 + 8 * H);
   play('v-mile3', { type: 'dispatchPO', jobId: 'j-v3', poId: lastPO('j-v3').id, waybill: 'Rider Chuks · 0803 555 0303 · arriving this afternoon' }, now - 3 * H);
+  say('v-mile3', 'j-v3', 'v-mile3', 'Paint has been mixed and sent. Rider should be there by 3pm.', now - 3 * H + 5 * 60000);
+  say(REP, 'j-v3', 'client', 'Your paint is on the way, Mr Kenneth. Please check each item and tap “I\'ve received it” when it arrives.', now - 2 * H - 30 * 60000);
 
   // 5. Plumbing: Kenneth refused Mile 3's delivery. Mile 3 must collect it; Oil Mill's offer is still open for the rep to re-plan.
   const t5 = now - 30 * H;
@@ -191,19 +193,18 @@ export function seedState(now = Date.now()): AppState {
   offer('j-v5', 'v-oilmill', [['pl-wc', 'all', 16000], ['pl-ball', 'all', 2600], ['pl-ptfe', 'all', 300]], 2000, t5 + 3 * H);
   offer('j-v5', 'v-mile3', [['pl-wc', 'all', 14500], ['pl-ball', 'all', 2400], ['pl-ptfe', 'all', 300]], 0, t5 + 4 * H, 'Free delivery in GRA.');
   play(REP, { type: 'recommendPlan', jobId: 'j-v5', kind: 'single', vendorId: 'v-mile3' }, t5 + 5 * H);
-  play('a-ibrahim', { type: 'artisanReviewSupply', jobId: 'j-v5', ok: true, note: '' }, t5 + 6 * H);
-  play(REP, { type: 'authorizeSupply', jobId: 'j-v5' }, t5 + 7 * H);
+  play('c-kenneth', { type: 'clientReviewSupply', jobId: 'j-v5', ok: true, note: '' }, t5 + 7 * H);
   play('v-mile3', { type: 'confirmPO', jobId: 'j-v5', poId: lastPO('j-v5').id, confirmed: {} }, t5 + 8 * H);
   play('v-mile3', { type: 'dispatchPO', jobId: 'j-v5', poId: lastPO('j-v5').id, waybill: 'Rider Ebi · 0803 555 0404' }, t5 + 20 * H);
   play('c-kenneth', { type: 'refusePO', jobId: 'j-v5', poId: lastPO('j-v5').id, reason: 'Wrong item or brand', note: 'Fittings are for a low-level cistern; mine is close-coupled.' }, now - 2 * H);
+  say('c-kenneth', 'j-v5', 'client', 'The fittings they brought are the wrong type. Please get the close-coupled set.', now - 2 * H + 10 * 60000);
 
   // 3. Tiling: purchase order issued to Mile 3, waiting for Mile 3 to confirm its stock.
   const t2 = now - 20 * H;
   awarded({ id: 'j-v2', clientId: 'c-ada', addr: '7 Ikwerre Road, D-Line', artisanId: 'a-tunde', title: 'Retile guest bathroom floor', category: 'Tiler', tier: 'Basic', desc: 'Guest bathroom floor is 2.5 m by 2 m. Remove old cracked tiles and lay new 60×60 grey floor tiles. Drain must stay where it is.', lines: [line('Tiler', 'hr-tiles', 6, '60×60 matte grey, non-slip'), line('Tiler', 'hr-adhes', 3), line('Tiler', 'hr-grout', 2, 'Grey'), line('Tiler', 'hr-cement', 1)], fee: 40000, dayOffset: 1, at: t2, media: ['tiles'] });
   offer('j-v2', 'v-mile3', [['hr-tiles', 'all', 9200], ['hr-adhes', 'all', 7400], ['hr-grout', 'all', 2500], ['hr-cement', 'all', 6400]], 2000, t2 + 3 * H, 'Same batch, no shade difference.');
   play(REP, { type: 'recommendPlan', jobId: 'j-v2', kind: 'single', vendorId: 'v-mile3' }, t2 + 5 * H);
-  play('a-tunde', { type: 'artisanReviewSupply', jobId: 'j-v2', ok: true, note: '' }, t2 + 6 * H);
-  play(REP, { type: 'authorizeSupply', jobId: 'j-v2' }, now - 4 * H);
+  play('c-ada', { type: 'clientReviewSupply', jobId: 'j-v2', ok: true, note: '' }, now - 4 * H);
 
   // 2. Welding: plan with a substitution and extra cost; the artisan has confirmed, Kenneth must approve.
   const t6 = now - 14 * H;
@@ -212,12 +213,17 @@ export function seedState(now = Date.now()): AppState {
   offer('j-v6', 'v-oilmill', [['we-rod', 'all', 6800], ['we-paint', 'all', 13000]], 1500, t6 + 4 * H);
   play(REP, { type: 'recommendPlan', jobId: 'j-v6', kind: 'single', vendorId: 'v-mile3' }, t6 + 6 * H);
   play('a-musa', { type: 'artisanReviewSupply', jobId: 'j-v6', ok: true, note: '' }, now - 5 * H);
+  say(REP, 'j-v6', 'client', 'Good afternoon sir. The local 1.5 mm pipe is out of stock in Mile 3 until next month. Musa has checked the Turkish one and it is the same gauge. The total is in your quotation below.', now - 5 * H + 20 * 60000);
 
   // 1. Electrical: still collecting offers. Oil Mill can supply everything; Mile 3 only part, cheaper.
   const t1 = now - 8 * H;
   awarded({ id: 'j-v1', clientId: 'c-ada', addr: '7 Ikwerre Road, D-Line', artisanId: 'a-chidi', title: 'Rewire kitchen sockets and lights', category: 'Electrician', tier: 'Pro', desc: 'Four double sockets and three ceiling lights in the kitchen need new cabling. Breaker trips when the kettle is on. Conduit is already in the wall.', lines: [line('Electrician', 'el-cab25', 1, 'Copper, 2.5 mm² twin and earth'), line('Electrician', 'el-socket', 4, 'White, switched'), line('Electrician', 'el-down', 3, 'Warm white'), line('Electrician', 'el-mcb', 2, '20A')], fee: 35000, dayOffset: 1, at: t1, media: ['solar'] });
   offer('j-v1', 'v-oilmill', [['el-cab25', 'all', 64000], ['el-socket', 'all', 2600], ['el-down', 'all', 3600], ['el-mcb', 'all', 2500]], 2000, t1 + 3 * H, 'Nigerchin cable, all items in stock.');
   offer('j-v1', 'v-mile3', [['el-socket', 'all', 2300], ['el-down', 'all', 3000]], 1500, t1 + 4 * H);
+  say('c-ada', 'j-v1', 'client', 'Please make sure the cable is Nigerchin or Coleman. The old one was a cheap brand.', t1 + 4 * H + 30 * 60000);
+  say(REP, 'j-v1', 'client', 'Noted, Ma. Oil Mill is offering Nigerchin. I will send you the best quotation shortly.', t1 + 5 * H);
+  say(REP, 'j-v1', 'v-mile3', 'Do you have 2.5 mm² Nigerchin cable too? It would save a second delivery.', t1 + 5 * H + 10 * 60000);
+  say('v-mile3', 'j-v1', 'v-mile3', 'No ma, only Coleman 1.5 mm in stock now.', t1 + 6 * H);
 
   // Wallets: clients start from friendly round numbers, with one top-up covering what they paid above.
   for (const [id, start] of Object.entries(START)) {
@@ -234,15 +240,15 @@ export function seedState(now = Date.now()): AppState {
 
 /** Accounts offered on the sign-in screen (staging only). */
 export const DEMO_ACCOUNTS: { id: string; note: string }[] = [
-  { id: 'c-kenneth', note: 'Client · a materials plan to approve' },
+  { id: 'c-kenneth', note: 'Client · a materials quotation to pay' },
   { id: 'c-ada', note: 'Client · has 3 open jobs' },
   { id: 'r-ifeoma', note: 'Allyfe market representative · Port Harcourt' },
   { id: 'v-mile3', note: 'Market vendor · orders at every stage' },
   { id: 'v-oilmill', note: 'Market vendor · Oil Mill, Port Harcourt' },
   { id: 'a-emeka', note: 'Woodworker · ★ 4.9, has an apprentice' },
   { id: 'a-ibrahim', note: 'Plumber · ★ 4.8' },
-  { id: 'a-musa', note: 'Welder · materials plan confirmed' },
-  { id: 'a-chidi', note: 'Electrician · materials plan to confirm' },
+  { id: 'a-musa', note: 'Welder · substitute confirmed' },
+  { id: 'a-chidi', note: 'Electrician · materials being priced' },
   { id: 'a-tunde', note: 'Tiler · construction team of 4' },
   { id: 'a-chinedu', note: 'Woodworker · former apprentice of Emeka' },
   { id: 'a-david', note: 'Plumber · ★ 4.5' },

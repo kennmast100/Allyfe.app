@@ -13,7 +13,6 @@ import {
   customKey,
   formatNaira,
   isOnOrAfterDay,
-  linesTotal,
   misdescribedSplit,
   rankArtisans,
   serviceName,
@@ -263,7 +262,7 @@ export function ArtisanJobs({ tab = 'new' }: { tab?: 'new' | 'bids' | 'mine' }) 
                 <div className="grow">
                   <b className="t13">{j.title}</b>
                   <div className="small">
-                    Your bid {formatNaira(linesTotal(b.lines) + b.serviceFee)} · {timeAgo(b.at)}
+                    Your workmanship {formatNaira(b.serviceFee)} · {timeAgo(b.at)}
                   </div>
                   <span className={'tag mt6 ' + (waiting ? 'blue' : 'grey')}>{waiting ? 'Waiting for client' : j.status === 'cancelled' ? 'Job cancelled' : 'Client chose someone else'}</span>
                 </div>
@@ -342,7 +341,7 @@ export function ArtisanJob({ job: j }: { job: Job }) {
     case 'materials_on_the_way':
       focus = (
         <div className="focus">
-          <h4>{j.supply?.plan && !j.supply.plan.artisanOkAt ? 'Please check the materials plan below' : 'Allyfe Supply is getting your materials'}</h4>
+          <h4>{j.supply?.plan?.needsArtisan && !j.supply.plan.artisanOkAt ? 'Please check the substitute below' : 'Allyfe Supply is getting your materials'}</h4>
           <p>You start on {dayLabel(j.scheduledDay!)}. We'll tell you when every item has reached the client.</p>
         </div>
       );
@@ -464,7 +463,6 @@ export function QuoteForm({ jobId }: { jobId: string }) {
   };
   const setQty = (i: number, qty: number) => setLines(qty <= 0 ? lines.filter((_, k) => k !== i) : lines.map((x, k) => (k === i ? { ...x, qty } : x)));
   const { billable, covered } = billableMaterials(lines, j.deliveredMaterials);
-  const materials = linesTotal(billable);
   const serviceFee = num(fee);
 
   return (
@@ -472,7 +470,7 @@ export function QuoteForm({ jobId }: { jobId: string }) {
       <BackBar label="Job" />
       <h2>Your quotation</h2>
       <p className="sub">
-        {j.title}. List the materials you need, then set your service fee. The client sees every line.
+        {j.title}. List the materials and quantities you need with their spec, then set your workmanship. Market vendors add today's prices for the materials, so you don't price them.
       </p>
 
       <h3>Materials</h3>
@@ -484,7 +482,7 @@ export function QuoteForm({ jobId }: { jobId: string }) {
           <option value="">Choose a material…</option>
           {catalog.map((c) => (
             <option key={c.key} value={c.key}>
-              {c.name} · {formatNaira(c.price)}/{c.unit}
+              {c.name} ({c.unit})
             </option>
           ))}
         </select>
@@ -495,7 +493,7 @@ export function QuoteForm({ jobId }: { jobId: string }) {
             disabled={!pick}
             onClick={() => {
               const c = catalog.find((x) => x.key === pick)!;
-              add({ key: c.key, name: c.name, unit: c.unit, unitPrice: c.price, qty: Math.max(1, num(pickQty)) });
+              add({ key: c.key, name: c.name, unit: c.unit, unitPrice: 0, qty: Math.max(1, num(pickQty)) });
               setPick('');
               setPickQty('1');
             }}
@@ -509,25 +507,15 @@ export function QuoteForm({ jobId }: { jobId: string }) {
             Material name
           </label>
           <input id="cname" type="text" placeholder="e.g. Silicone sealant" value={custom.name} onChange={(e) => setCustom({ ...custom, name: e.target.value })} />
-          <div className="row">
-            <div>
-              <label className="f" htmlFor="cprice">
-                Cost price (₦ each)
-              </label>
-              <input id="cprice" type="text" inputMode="numeric" value={custom.price} onChange={(e) => setCustom({ ...custom, price: e.target.value })} />
-            </div>
-            <div>
-              <label className="f" htmlFor="cqty">
-                Quantity
-              </label>
-              <input id="cqty" type="text" inputMode="numeric" value={custom.qty} onChange={(e) => setCustom({ ...custom, qty: e.target.value })} />
-            </div>
-          </div>
+          <label className="f" htmlFor="cqty">
+            Quantity
+          </label>
+          <input id="cqty" type="text" inputMode="numeric" value={custom.qty} onChange={(e) => setCustom({ ...custom, qty: e.target.value })} />
           <button
             className="btn secondary mt8"
-            disabled={!custom.name.trim() || !num(custom.price)}
+            disabled={!custom.name.trim()}
             onClick={() => {
-              add({ key: customKey(custom.name), name: custom.name.trim(), unit: 'item', unitPrice: num(custom.price), qty: Math.max(1, num(custom.qty)) });
+              add({ key: customKey(custom.name), name: custom.name.trim(), unit: 'item', unitPrice: 0, qty: Math.max(1, num(custom.qty)) });
               setCustom({ name: '', price: '', qty: '1' });
             }}
           >
@@ -543,7 +531,8 @@ export function QuoteForm({ jobId }: { jobId: string }) {
               <div className="grow">
                 <b className="t13">{l.name}</b>
                 <div className="small">
-                  {formatNaira(l.unitPrice)} each{l.key.startsWith('custom:') ? ' · your price' : ''}
+                  {l.unit}
+                  {l.key.startsWith('custom:') ? ' · added by you' : ''}
                 </div>
               </div>
               <div className="stepper">
@@ -555,7 +544,6 @@ export function QuoteForm({ jobId }: { jobId: string }) {
                   +
                 </button>
               </div>
-              <b className="t13 nowrap w72 tr">{formatNaira(l.unitPrice * l.qty)}</b>
               <input
                 className="spec-in"
                 type="text"
@@ -571,12 +559,12 @@ export function QuoteForm({ jobId }: { jobId: string }) {
       )}
       {covered.length > 0 && (
         <Notice tone="info" icon="i">
-          {covered.map((c) => `${c.qty} × ${c.name}`).join(', ')} {covered.length === 1 ? 'is' : 'are'} already at the client's home, so {covered.length === 1 ? "it isn't" : "they aren't"} charged.
+          {covered.map((c) => `${c.qty} × ${c.name}`).join(', ')} {covered.length === 1 ? 'is' : 'are'} already at the client's home, so {covered.length === 1 ? "it isn't" : "they aren't"} bought again.
         </Notice>
       )}
 
       <h3>
-        Service fee
+        Workmanship (your service fee)
         <span className={'tag xs tier-' + j.tier.toLowerCase()}>
           {j.tier} job · {feePercent(j.tier)} Allyfe fee
         </span>
@@ -599,16 +587,12 @@ export function QuoteForm({ jobId }: { jobId: string }) {
 
       <div className="card money mt14">
         <div>
-          <span>Materials{billable.length ? ` (${billable.length} item${billable.length > 1 ? 's' : ''})` : ''}</span>
-          <b>{formatNaira(materials)}</b>
-        </div>
-        <div>
-          <span>Service fee ({j.tier} job)</span>
-          <b>{formatNaira(serviceFee)}</b>
+          <span>Materials</span>
+          <span className="small">{billable.length ? `${billable.length} item${billable.length > 1 ? 's' : ''} · priced by market vendors` : 'none to buy'}</span>
         </div>
         <div className="tot">
-          <span>Your bid (what the client pays)</span>
-          <span>{formatNaira(materials + serviceFee)}</span>
+          <span>Workmanship ({j.tier} job)</span>
+          <span>{formatNaira(serviceFee)}</span>
         </div>
         <div className="small">
           You take home {formatNaira(serviceFee - platformFee(serviceFee, j.tier))} after the {feePercent(j.tier)} Allyfe fee.
@@ -620,7 +604,7 @@ export function QuoteForm({ jobId }: { jobId: string }) {
           if (dispatch({ type: 'submitBid', jobId: j.id, bid: { lines, serviceFee, day: day[0] ?? '', message } }, 'Bid sent.')) go({ name: 'applied', jobId: j.id });
         }}
       >
-        Bid {formatNaira(materials + serviceFee)}
+        Send quotation · {formatNaira(serviceFee)} workmanship
       </button>
     </>
   );

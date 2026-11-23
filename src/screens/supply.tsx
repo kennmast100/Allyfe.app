@@ -7,7 +7,7 @@ import { useState } from 'react';
 import { Avatar, Icon } from '../components/art';
 import { BackBar, Empty, Notice, TopBar, dayLabel, timeAgo } from '../components/ui';
 import { vendorServes } from '../domain/actions';
-import { MATERIAL_REJECT_REASONS, SUPPLY_STATUS_LABEL, compareOffers, formatNaira, fullAddress, poTotal, serviceName, supplyFunds, supplyNeed } from '../domain/rules';
+import { MATERIAL_REJECT_REASONS, SUPPLY_STATUS_LABEL, compareOffers, formatNaira, fullAddress, planDue, poTotal, serviceName, supplyFunds, supplyNeed } from '../domain/rules';
 import { repQueue, vendorQueue, vendorRecord } from '../domain/view';
 import type { Job, PurchaseOrder, Rep, Supply, SupplyOffer, Vendor } from '../domain/types';
 import { useApp } from '../store/store';
@@ -22,8 +22,10 @@ const PO_LABEL: Record<PurchaseOrder['status'], string> = {
   cancelled: 'Cancelled',
 };
 const PO_TONE: Record<PurchaseOrder['status'], string> = { issued: 'warn', confirmed: 'blue', declined: 'grey', dispatched: 'blue', received: 'good', refused: 'bad', cancelled: 'grey' };
-const STAGES = ['Offers', 'Approval', 'Orders', 'Delivery', 'Done'];
-const stageIndex = (sp: Supply) => ({ sourcing: 0, approval: 1, ordering: 2, delivering: 3, complete: 5, cancelled: -1 })[sp.status];
+const STAGES = ['Vendor prices', 'Client pays', 'Orders', 'Delivery', 'Done'];
+/** Once part of the list is ordered, a request still being sourced for the rest shows at the Orders stage. */
+const partOrdered = (sp: Supply) => sp.status === 'sourcing' && sp.orders.some((o) => ['issued', 'confirmed', 'dispatched', 'received'].includes(o.status));
+const stageIndex = (sp: Supply) => (partOrdered(sp) ? 2 : { sourcing: 0, approval: 1, ordering: 2, delivering: 3, complete: 5, cancelled: -1 }[sp.status]);
 const first = (n: string) => n.split(' ')[0];
 
 /* ---------------- shared pieces ---------------- */
@@ -43,7 +45,7 @@ export function SupplyStages({ supply }: { supply: Supply }) {
 }
 
 /** Every material line with its specification and how much has arrived. */
-export function SupplyLines({ supply, showBudget }: { supply: Supply; showBudget?: boolean }) {
+export function SupplyLines({ supply }: { supply: Supply }) {
   const need = supplyNeed(supply);
   return (
     <div className="sl-list">
@@ -64,7 +66,7 @@ export function SupplyLines({ supply, showBudget }: { supply: Supply; showBudget
             </div>
             <div className="small">
               {l.delivered >= l.qty ? '✓ Delivered' : need[l.id] > 0 ? `${need[l.id]} still to source` : 'Ordered'}
-              {showBudget ? ` · budget ${formatNaira(l.budgetPrice)} each` : ''}
+              
             </div>
           </div>
         );
@@ -73,15 +75,19 @@ export function SupplyLines({ supply, showBudget }: { supply: Supply; showBudget
   );
 }
 
-function PlanSummary({ supply, job }: { supply: Supply; job: Job }) {
+/** The representative's materials quotation. Clients and artisans see the items and the total, not which vendor supplies what. */
+function PlanSummary({ supply, job, viewer }: { supply: Supply; job: Job; viewer: 'client' | 'artisan' | 'rep' }) {
   const { state } = useApp();
   const p = supply.plan!;
   const vendors = [...new Set(p.allocations.map((a) => a.vendorId))];
+  const showVendors = viewer === 'rep';
+  const feeUnpaid = Math.max(0, (job.serviceFee ?? 0) - job.escrow);
+  const held = p.total + feeUnpaid - p.due;
   return (
     <div className="card plan">
       <div className="between">
-        <b className="t14">{p.kind === 'single' ? 'Complete supply' : 'Combined supply'}</b>
-        <span className="tag blue xs">{vendors.map((v) => state.users[v]?.name).join(' + ')}</span>
+        <b className="t14">Materials quotation</b>
+        <span className="tag blue xs">{showVendors ? vendors.map((v) => state.users[v]?.name).join(' + ') : `${vendors.length} market vendor${vendors.length > 1 ? 's' : ''}`}</span>
       </div>
       <div className="quote mt6">
         {p.allocations.map((a, i) => {
@@ -98,7 +104,8 @@ function PlanSummary({ supply, job }: { supply: Supply; job: Job }) {
                   l.name
                 )}
                 <small>
-                  {a.qty} × {formatNaira(a.unitPrice)} · {state.users[a.vendorId]?.name}
+                  {a.qty} × {formatNaira(a.unitPrice)}
+                  {showVendors ? ` · ${state.users[a.vendorId]?.name}` : ''}
                 </small>
               </span>
               <b>{formatNaira(a.qty * a.unitPrice)}</b>
@@ -106,40 +113,85 @@ function PlanSummary({ supply, job }: { supply: Supply; job: Job }) {
           );
         })}
         <div className="q-row sub">
-          <span>Delivery</span>
+          <span>Delivery to site</span>
           <b>{formatNaira(p.delivery)}</b>
         </div>
         <div className="q-row tot">
-          <span>Plan total</span>
+          <span>Materials total</span>
           <b>{formatNaira(p.total)}</b>
         </div>
-      </div>
-      <div className="small mt6">
-        {p.extra > 0 ? (
-          <span className="warn-ink">
-            <b>{formatNaira(p.extra)} more</b> than the money held for materials ({formatNaira(supplyFunds(job))}).
-          </span>
-        ) : (
-          `Within the materials budget held by Allyfe (${formatNaira(supplyFunds(job))}). Any saving is returned to the client at the end.`
+        {viewer !== 'artisan' && (
+          <>
+            {feeUnpaid > 0 && (
+              <div className="q-row sub">
+                <span>Workmanship (artisan's service fee)</span>
+                <b>{formatNaira(feeUnpaid)}</b>
+              </div>
+            )}
+            {held > 0 && (
+              <div className="q-row sub">
+                <span>Already held by Allyfe for this job</span>
+                <b>−{formatNaira(held)}</b>
+              </div>
+            )}
+            <div className="q-row tot pay">
+              <span>{p.clientOkAt ? 'Paid' : viewer === 'client' ? 'To pay now' : 'Client pays'}</span>
+              <b>{formatNaira(p.due)}</b>
+            </div>
+          </>
         )}
       </div>
       <div className="approvals">
-        <span className={p.artisanOkAt ? 'ok' : ''}>{p.artisanOkAt ? '✓' : '○'} Artisan: technically suitable</span>
-        {p.needsClient && <span className={p.clientOkAt ? 'ok' : ''}>{p.clientOkAt ? '✓' : '○'} Client: {p.extra > 0 && p.substitutions ? 'extra cost and substitution' : p.extra > 0 ? 'extra cost' : 'substitution'}</span>}
-        <span>○ Allyfe representative: authorize</span>
+        {p.needsArtisan && <span className={p.artisanOkAt ? 'ok' : ''}>{p.artisanOkAt ? '✓' : '○'} Artisan: substitute is technically suitable</span>}
+        <span className={p.clientOkAt ? 'ok' : ''}>{p.clientOkAt ? '✓' : '○'} Client: approve and pay</span>
       </div>
     </div>
   );
 }
 
-function OrderCard({ job, order, viewer }: { job: Job; order: PurchaseOrder; viewer: 'client' | 'artisan' | 'rep' | 'vendor' }) {
+/** A conversation on a supply request. Threads: 'client' (client ↔ representative) or a vendor's id (vendor ↔ representative). */
+export function MessageThread({ job, thread, title, hint }: { job: Job; thread: string; title: string; hint?: string }) {
+  const { state, user, dispatch } = useApp();
+  const [text, setText] = useState('');
+  const sp = job.supply;
+  if (!sp || !sp.repId) return null;
+  const msgs = sp.messages.filter((m) => m.thread === thread);
+  return (
+    <div className="card thread mt8">
+      <b className="t13">{title}</b>
+      {hint && <p className="small m0">{hint}</p>}
+      <div className="msgs">
+        {msgs.length === 0 && <div className="small">No messages yet.</div>}
+        {msgs.map((m) => {
+          const mine = m.from === user!.id;
+          const who = state.users[m.from];
+          return (
+            <div key={m.id} className={'msg' + (mine ? ' me' : '')}>
+              {!mine && <span className="who">{who ? (who.role === 'rep' ? `${first(who.name)} · Allyfe rep` : first(who.name)) : ''}</span>}
+              {m.text}
+              <span className="when">{timeAgo(m.at)}</span>
+            </div>
+          );
+        })}
+      </div>
+      <div className="msg-in">
+        <input type="text" aria-label={`Message: ${title}`} placeholder="Type a message…" value={text} onChange={(e) => setText(e.target.value)} maxLength={500} />
+        <button className="btn primary sm" disabled={!text.trim()} onClick={() => dispatch({ type: 'sendSupplyMessage', jobId: job.id, thread, text }) && setText('')}>
+          Send
+        </button>
+      </div>
+    </div>
+  );
+}
+
+function OrderCard({ job, order, viewer, label }: { job: Job; order: PurchaseOrder; viewer: 'client' | 'artisan' | 'rep' | 'vendor'; label?: string }) {
   const { state } = useApp();
   const v = state.users[order.vendorId];
   return (
     <div className="card po">
       <div className="between">
         <b className="t13">
-          {order.ref} · {viewer === 'vendor' ? 'Your purchase order' : v?.name}
+          {viewer === 'vendor' ? `${order.ref} · Your purchase order` : viewer === 'rep' ? `${order.ref} · ${v?.name}` : `${label ?? order.ref} · ${order.ref}`}
         </b>
         <span className={'tag xs ' + PO_TONE[order.status]}>{PO_LABEL[order.status]}</span>
       </div>
@@ -250,15 +302,17 @@ function ReceiveOrder({ job, order }: { job: Job; order: PurchaseOrder }) {
 /* ---------------- client & artisan: the supply panel on the job page ---------------- */
 export function SupplyPanel({ job, viewer }: { job: Job; viewer: 'client' | 'artisan' }) {
   const { state, dispatch } = useApp();
+  // (state.wallets only holds the signed-in user's own wallet.)
   const [reject, setReject] = useState(false);
   const [note, setNote] = useState('');
   const sp = job.supply;
   if (!sp) return null;
   const rep = sp.repId ? (state.users[sp.repId] as Rep | undefined) : undefined;
   const p = sp.plan;
-  const artisanTurn = viewer === 'artisan' && p && !p.artisanOkAt;
-  const clientTurn = viewer === 'client' && p && p.needsClient && p.artisanOkAt && !p.clientOkAt;
+  const artisanTurn = viewer === 'artisan' && p && p.needsArtisan && !p.artisanOkAt;
+  const clientTurn = viewer === 'client' && p && (!p.needsArtisan || p.artisanOkAt) && !p.clientOkAt;
   const live = sp.orders.filter((o) => o.status !== 'cancelled');
+  const wallet = state.wallets[job.clientId] ?? 0;
   return (
     <div className="supply mt12">
       <div className="supply-hd">
@@ -267,7 +321,7 @@ export function SupplyPanel({ job, viewer }: { job: Job; viewer: 'client' | 'art
         </span>
         <div className="grow">
           <b className="t14">Allyfe Supply · {sp.ref}</b>
-          <div className="small">{SUPPLY_STATUS_LABEL[sp.status]}</div>
+          <div className="small">{partOrdered(sp) ? 'Part ordered · rest being sourced' : SUPPLY_STATUS_LABEL[sp.status]}</div>
         </div>
         {rep && (
           <span className="rep-chip" title="Allyfe market representative">
@@ -276,24 +330,27 @@ export function SupplyPanel({ job, viewer }: { job: Job; viewer: 'client' | 'art
         )}
       </div>
       <SupplyStages supply={sp} />
-      {sp.status === 'sourcing' && (
+      {sp.status === 'sourcing' && !p && live.length > 0 && (
         <p className="small m0">
-          {viewer === 'client' ? 'Registered vendors in your city are sending offers. ' : 'Vendors are sending offers. '}
-          {rep ? `${rep.name}, your Allyfe representative,` : 'An Allyfe representative'} compares complete and combined supply and recommends the best plan.
+          Part of the list is already ordered. {rep ? first(rep.name) : 'Your representative'} is finding a vendor for what's left and will send {viewer === 'client' ? 'you' : 'the client'} a quotation for it.
+        </p>
+      )}
+      {sp.status === 'sourcing' && !p && !live.length && (
+        <p className="small m0">
+          Market vendors are adding today's unit prices for the items in stock. {rep ? `${rep.name}, your Allyfe representative,` : 'Your Allyfe representative'} picks the best vendor and sends {viewer === 'client' ? 'you' : 'the client'} the total to pay. Nothing is bought before {viewer === 'client' ? 'you pay' : 'the client pays'}.
         </p>
       )}
       {p && (
         <>
-          <h4 className="mt10 mb0">Recommended materials plan</h4>
-          <PlanSummary supply={sp} job={job} />
+          <PlanSummary supply={sp} job={job} viewer={viewer} />
           {artisanTurn && (
             <div className="focus mt8">
-              <h4>Are these materials technically right?</h4>
-              <p>Check every item and any substitution against your specification.</p>
+              <h4>Is the substitute technically right?</h4>
+              <p>The vendor can't supply exactly what you specified. Check the substitute before the client is asked to pay.</p>
               {!reject ? (
                 <>
-                  <button className="btn primary" onClick={() => dispatch({ type: 'artisanReviewSupply', jobId: job.id, ok: true, note: '' }, 'Confirmed.')}>
-                    Yes, they're suitable
+                  <button className="btn primary" onClick={() => dispatch({ type: 'artisanReviewSupply', jobId: job.id, ok: true, note: '' }, 'Confirmed. The client has been asked to pay.')}>
+                    Yes, it's suitable
                   </button>
                   <button className="btn concern" onClick={() => setReject(true)}>
                     No, something is wrong
@@ -311,35 +368,34 @@ export function SupplyPanel({ job, viewer }: { job: Job; viewer: 'client' | 'art
           )}
           {clientTurn && (
             <div className="focus warn mt8">
-              <h4>Your approval is needed</h4>
+              <h4>Pay to start delivery</h4>
               <p>
-                {p.extra > 0 && (
-                  <>
-                    This plan costs <b>{formatNaira(p.extra)} more</b> than the materials money already held.{' '}
-                  </>
-                )}
+                {rep ? first(rep.name) : 'Your representative'} picked the best price from the market.
                 {p.substitutions > 0 && (
                   <>
-                    It includes <b>{p.substitutions} substitution{p.substitutions > 1 ? 's' : ''}</b>, which the artisan has confirmed are suitable.
+                    {' '}
+                    It includes <b>{p.substitutions} substitute{p.substitutions > 1 ? 's' : ''}</b>, which the artisan has confirmed are suitable.
                   </>
-                )}
+                )}{' '}
+                Allyfe holds the money and pays each vendor only when you confirm their delivery.
               </p>
-              <button className="btn primary" onClick={() => dispatch({ type: 'clientReviewSupply', jobId: job.id, ok: true, note: '' }, p.extra > 0 ? `${formatNaira(p.extra)} paid into Allyfe.` : 'Approved.')}>
-                Approve{p.extra > 0 ? ` and pay ${formatNaira(p.extra)}` : ''}
-              </button>
-              <button className="btn secondary" onClick={() => dispatch({ type: 'clientReviewSupply', jobId: job.id, ok: false, note: '' }, 'Declined. The representative will look for another option.')}>
-                Decline this plan
+              <div className="small">Wallet balance: {formatNaira(wallet)}</div>
+              {p.due > wallet ? (
+                <button className="btn orange" onClick={() => dispatch({ type: 'topUp', amount: Math.ceil((p.due - wallet) / 10000) * 10000 }, 'Wallet topped up.')}>
+                  Top up {formatNaira(Math.ceil((p.due - wallet) / 10000) * 10000)}
+                </button>
+              ) : (
+                <button className="btn primary" onClick={() => dispatch({ type: 'clientReviewSupply', jobId: job.id, ok: true, note: '' }, p.due > 0 ? `${formatNaira(p.due)} paid into Allyfe. The vendors have been told to deliver.` : 'Approved.')}>
+                  {p.due > 0 ? `Pay ${formatNaira(p.due)}` : 'Approve'}
+                </button>
+              )}
+              <button className="btn secondary" onClick={() => dispatch({ type: 'clientReviewSupply', jobId: job.id, ok: false, note: '' }, 'Declined. Your representative will look for another option.')}>
+                Ask for another option
               </button>
             </div>
           )}
           {!artisanTurn && !clientTurn && (
-            <p className="small mt6">
-              {!p.artisanOkAt
-                ? 'Waiting for the artisan to confirm the materials.'
-                : p.needsClient && !p.clientOkAt
-                  ? 'Waiting for the client to approve.'
-                  : 'Approved. Waiting for the Allyfe representative to issue purchase orders.'}
-            </p>
+            <p className="small mt6">{p.needsArtisan && !p.artisanOkAt ? 'Waiting for the artisan to check the substitute.' : 'Waiting for the client to pay.'}</p>
           )}
         </>
       )}
@@ -347,15 +403,53 @@ export function SupplyPanel({ job, viewer }: { job: Job; viewer: 'client' | 'art
       <SupplyLines supply={sp} />
       {live.length > 0 && (
         <>
-          <h4 className="mt10 mb0">Purchase orders</h4>
+          <h4 className="mt10 mb0">Deliveries</h4>
           <div className="list mt6">
-            {live.map((o) => (
-              <OrderCard key={o.id} job={job} order={o} viewer={viewer} />
+            {live.map((o, i) => (
+              <OrderCard key={o.id} job={job} order={o} viewer={viewer} label={`Delivery ${i + 1}${live.length > 1 ? ` of ${live.length}` : ''}`} />
             ))}
           </div>
         </>
       )}
       {sp.status === 'complete' && sp.refunded ? <Notice tone="info" icon="✓">{formatNaira(sp.refunded)} of unused materials money was returned to the client.</Notice> : null}
+      {viewer === 'client' && <RateRep job={job} />}
+      {viewer === 'client' && rep && (
+        <MessageThread job={job} thread="client" title={`Messages with ${first(rep.name)}, your Allyfe representative`} hint={`Ask about prices, brands or delivery here, or call ${rep.phone || 'your representative'}. Allyfe talks to the vendors for you.`} />
+      )}
+    </div>
+  );
+}
+
+/** Once the materials are in, the client rates how smoothly the representative handled it (the rep's appraisal). */
+function RateRep({ job }: { job: Job }) {
+  const { state, dispatch } = useApp();
+  const [stars, setStars] = useState(0);
+  const [text, setText] = useState('');
+  const sp = job.supply!;
+  const rep = sp.repId ? state.users[sp.repId] : undefined;
+  if (!rep || sp.status !== 'complete') return null;
+  if (sp.repRating)
+    return (
+      <div className="card mt8">
+        <b className="t13">You rated {first(rep.name)} ★ {sp.repRating.stars}</b>
+        {sp.repRating.text && <p className="small m0">“{sp.repRating.text}”</p>}
+      </div>
+    );
+  return (
+    <div className="focus mt8">
+      <h4>How smooth was it with {first(rep.name)}?</h4>
+      <p>Rate how your Allyfe representative handled prices, updates and delivery. It counts towards their appraisal.</p>
+      <div className="star-pick" role="radiogroup" aria-label="Representative rating">
+        {[1, 2, 3, 4, 5].map((n) => (
+          <button key={n} role="radio" aria-checked={stars === n} aria-label={`${n} star${n > 1 ? 's' : ''}`} className={n <= stars ? 'on' : ''} onClick={() => setStars(n)}>
+            ★
+          </button>
+        ))}
+      </div>
+      <textarea placeholder="Anything to add? (optional)" value={text} onChange={(e) => setText(e.target.value)} maxLength={300} />
+      <button className="btn primary" disabled={!stars} onClick={() => dispatch({ type: 'rateRep', jobId: job.id, stars, text }, 'Thanks for rating your representative.')}>
+        Submit rating
+      </button>
     </div>
   );
 }
@@ -562,15 +656,13 @@ export function OrderDetail({ jobId }: { jobId: string }) {
           <dd>{delivering ? fullAddress(j) : `${client.area} (full address with a purchase order)`}</dd>
           {delivering && (
             <>
-              <dt>Client</dt>
-              <dd>
-                {client.name} · {client.phone}
-              </dd>
+              <dt>Receiver</dt>
+              <dd>{first(client.name)} (client) · contact through the representative</dd>
             </>
           )}
           {rep && (
             <>
-              <dt>Allyfe representative</dt>
+              <dt>Your contact at Allyfe</dt>
               <dd>
                 {rep.name}
                 {rep.phone ? ` · ${rep.phone}` : ''}
@@ -593,12 +685,13 @@ export function OrderDetail({ jobId }: { jobId: string }) {
       {canOffer && <OfferForm key={myOffer?.id ?? 'new'} job={j} existing={myOffer} />}
       {!canOffer && !myOffer && !myOrders.length && <Notice>This request is fully sourced.</Notice>}
       {!myOrders.length && !canOffer && myOffer && <p className="small mt8">Your offer is in a plan waiting for approval.</p>}
-      {!delivering && <p className="small mt10">🔒 The client's phone number and full address appear once Allyfe sends you a purchase order.</p>}
+      <p className="small mt10">🔒 You deal only with the Allyfe representative, never the client directly. The delivery address appears once Allyfe sends you a purchase order.</p>
       {canOffer && myOffer && (
         <button className="btn secondary mt8" onClick={() => dispatch({ type: 'withdrawOffer', jobId: j.id }, 'Offer withdrawn.')}>
           Withdraw my offer
         </button>
       )}
+      {rep && <MessageThread job={j} thread={v.id} title={`Messages with ${first(rep.name)} (Allyfe representative)`} hint="Questions about stock, brands, prices or delivery go here." />}
     </>
   );
 }
@@ -661,7 +754,7 @@ function OfferForm({ job, existing }: { job: Job; existing?: SupplyOffer }) {
   return (
     <>
       <h3>{existing ? 'Update your offer' : 'Send your offer'}</h3>
-      <p className="small m0 mb8">Tick the items you can supply. You can offer part of a quantity. If you can't match the spec, offer a substitute; the artisan and client must approve it.</p>
+      <p className="small m0 mb8">Prices change, so the artisan's list has no prices: add today's unit price for each item you have in stock and the app works out the amount. Untick what you don't have, or lower the quantity to what's in store. Can't match the spec? Offer a substitute; the artisan must approve it.</p>
       <div className="list">
         {open.map((l) => {
           const r = rows[l.id];
@@ -678,14 +771,18 @@ function OfferForm({ job, existing }: { job: Job; existing?: SupplyOffer }) {
               </label>
               {r.on && (
                 <>
-                  <div className="row mt8">
+                  <div className="price-row mt8">
                     <div>
-                      <span className="small">Quantity</span>
+                      <span className="small">Qty in stock</span>
                       <input type="text" inputMode="numeric" aria-label={`Quantity of ${l.name}`} value={r.qty} onChange={(e) => set({ qty: e.target.value })} />
                     </div>
                     <div>
-                      <span className="small">Your price each (₦)</span>
-                      <input type="text" inputMode="numeric" aria-label={`Price of ${l.name}`} placeholder={String(l.budgetPrice)} value={r.price} onChange={(e) => set({ price: e.target.value })} />
+                      <span className="small">Unit price (₦)</span>
+                      <input type="text" inputMode="numeric" aria-label={`Price of ${l.name}`} placeholder="Add price" value={r.price} onChange={(e) => set({ price: e.target.value })} />
+                    </div>
+                    <div className="amt">
+                      <span className="small">Amount</span>
+                      <b>{num(r.price) ? formatNaira(num(r.qty) * num(r.price)) : '–'}</b>
                     </div>
                   </div>
                   {r.subOn ? (
@@ -815,17 +912,20 @@ function RepJobCard({ job: j }: { job: Job }) {
       : sp.status === 'cancelled'
         ? 'Cancelled'
         : p
-          ? p.artisanOkAt && (!p.needsClient || p.clientOkAt)
-            ? 'Ready to authorize'
-            : !p.artisanOkAt
-              ? 'Waiting for artisan'
-              : 'Waiting for client'
+          ? p.needsArtisan && !p.artisanOkAt
+            ? 'Artisan checking substitute'
+            : 'Waiting for client to pay'
           : need
             ? offers
               ? `${offers} offer${offers > 1 ? 's' : ''} to compare`
               : 'Waiting for offers'
             : SUPPLY_STATUS_LABEL[sp.status];
-  const tone = next === 'Ready to authorize' || next.includes('to compare') ? 'orange' : sp.status === 'complete' ? 'good' : 'blue';
+  const unanswered = (() => {
+    const last = new Map<string, string>();
+    for (const m of sp.messages) last.set(m.thread, m.from);
+    return [...last.values()].filter((f) => f !== sp.repId).length;
+  })();
+  const tone = next.includes('to compare') ? 'orange' : sp.status === 'complete' ? 'good' : 'blue';
   return (
     <button className="card job-card" onClick={() => go({ name: 'job', jobId: j.id })}>
       <div className="ph order-ic">
@@ -839,6 +939,7 @@ function RepJobCard({ job: j }: { job: Job }) {
           {state.users[j.clientId].name} · {serviceName(j.category)} · start {dayLabel(j.scheduledDay!)}
         </div>
         <span className={'tag ' + tone}>{next}</span>
+        {unanswered > 0 && <span className="tag orange ml6">{unanswered} message{unanswered > 1 ? 's' : ''} to answer</span>}
       </div>
       <Icon name="chev" size={14} />
     </button>
@@ -850,6 +951,7 @@ export function RepHome() {
   const r = user as Rep;
   const q = repQueue(state, r.id);
   const inDelivery = q.active.filter((j) => j.supply!.orders.some((o) => ['issued', 'confirmed', 'dispatched'].includes(o.status)));
+  const reviews = q.all.filter((j) => j.supply!.repRating).sort((a, b) => b.supply!.repRating!.at - a.supply!.repRating!.at);
   const hour = new Date().getHours();
   return (
     <>
@@ -882,7 +984,7 @@ export function RepHome() {
         ))}
       </div>
       <Notice tone="info" icon="i">
-        Compare complete and combined supply on cost, stock and delivery. The artisan confirms suitability, the client approves extra cost or substitutions, then you authorize and Allyfe issues the purchase orders.
+        Vendors add today's unit prices for the artisan's list. You pick the best vendor (or combination) and send the client one total. When the client pays, the purchase orders go out. You are the only contact between clients and vendors.
       </Notice>
       <h3>
         Needs you now
@@ -892,7 +994,23 @@ export function RepHome() {
         {q.action.map((j) => (
           <RepJobCard key={j.id} job={j} />
         ))}
-        {!q.action.length && <Empty title="Nothing waiting">New offers and approvals will show up here.</Empty>}
+        {!q.action.length && <Empty title="Nothing waiting">New vendor prices and messages will show up here.</Empty>}
+      </div>
+      <h3>Your appraisal</h3>
+      <div className="card appraisal">
+        <div className="between">
+          <span>
+            <b className="t20">★ {r.ratingCount ? r.rating.toFixed(1) : '–'}</b>
+            <span className="small"> from {r.ratingCount} client review{r.ratingCount === 1 ? '' : 's'}</span>
+          </span>
+          <span className="small">“How smooth was it?”</span>
+        </div>
+        {reviews.slice(0, 3).map((j) => (
+          <div className="review-line" key={j.id}>
+            <b className="t13">★ {j.supply!.repRating!.stars}</b> <span className="small">{state.users[j.clientId]?.name} · {timeAgo(j.supply!.repRating!.at)}</span>
+            {j.supply!.repRating!.text && <p className="small m0">“{j.supply!.repRating!.text}”</p>}
+          </div>
+        ))}
       </div>
       <h3>Markets you cover</h3>
       <div className="chips">
@@ -947,9 +1065,9 @@ export function RepRequest({ job: j }: { job: Job }) {
   const need = supplyNeed(sp);
   const client = state.users[j.clientId];
   const artisan = j.artisanId ? state.users[j.artisanId] : undefined;
-  const funds = supplyFunds(j);
   const p = sp.plan;
-  const readyToAuthorize = p && p.artisanOkAt && (!p.needsClient || p.clientOkAt);
+  const held = Math.max(0, supplyFunds(j));
+  const vendorThreads = [...new Set([...sp.offers.map((o) => o.vendorId), ...sp.orders.map((o) => o.vendorId), ...sp.messages.filter((m) => m.thread !== 'client').map((m) => m.thread)])];
   return (
     <>
       <BackBar label="Requests" />
@@ -972,35 +1090,35 @@ export function RepRequest({ job: j }: { job: Job }) {
               </dd>
             </>
           )}
-          <dt>Materials money held</dt>
-          <dd>{formatNaira(funds)}</dd>
+          <dt>Workmanship (artisan)</dt>
+          <dd>{formatNaira(j.serviceFee ?? 0)}</dd>
+          <dt>Held by Allyfe</dt>
+          <dd>{j.escrow ? `${formatNaira(j.escrow)}${held ? ` (${formatNaira(held)} free for materials)` : ''}` : 'Nothing yet: the client pays when you send the quotation'}</dd>
         </dl>
       </div>
 
       <h3>Material schedule</h3>
-      <SupplyLines supply={sp} showBudget />
+      <SupplyLines supply={sp} />
 
       {p && (
         <>
-          <h3>Recommended plan</h3>
-          <PlanSummary supply={sp} job={j} />
-          {readyToAuthorize ? (
-            <button className="btn primary mt10" onClick={() => dispatch({ type: 'authorizeSupply', jobId: j.id }, 'Purchase orders issued.')}>
-              Authorize and issue purchase orders
-            </button>
-          ) : (
-            <p className="small mt6">{!p.artisanOkAt ? `Waiting for ${artisan?.name ?? 'the artisan'} to confirm the materials.` : `Waiting for ${client.name} to approve.`}</p>
-          )}
-          <button className="btn secondary mt8" onClick={() => dispatch({ type: 'withdrawPlan', jobId: j.id }, 'Plan withdrawn.')}>
-            Withdraw plan
+          <h3>Quotation sent to the client</h3>
+          <PlanSummary supply={sp} job={j} viewer="rep" />
+          <p className="small mt6">
+            {p.needsArtisan && !p.artisanOkAt
+              ? `Waiting for ${artisan?.name ?? 'the artisan'} to check the substitute.`
+              : `Waiting for ${client.name} to pay. Purchase orders go to the vendors as soon as they do.`}
+          </p>
+          <button className="btn secondary mt8" onClick={() => dispatch({ type: 'withdrawPlan', jobId: j.id }, 'Quotation withdrawn.')}>
+            Withdraw quotation
           </button>
         </>
       )}
 
       {!p && Object.values(need).some((q) => q > 0) && (
         <>
-          <h3>Offers ({offers.length})</h3>
-          {!offers.length && <Empty title="No offers yet">Matching vendors in {j.city} have been notified.</Empty>}
+          <h3>Vendor prices ({offers.length})</h3>
+          {!offers.length && <Empty title="No prices yet">Matching vendors in {j.city} have been asked to add their unit prices.</Empty>}
           <div className="list">
             {offers.map((o) => (
               <OfferCard key={o.id} supply={sp} offer={o} />
@@ -1008,8 +1126,8 @@ export function RepRequest({ job: j }: { job: Job }) {
           </div>
           {options.length > 0 && (
             <>
-              <h3>Compare options</h3>
-              <p className="small m0 mb8">Complete suppliers are compared with the best combination of vendors. Nothing is allocated twice.</p>
+              <h3>Pick the best vendor</h3>
+              <p className="small m0 mb8">One vendor for everything is compared with the cheapest combination of vendors. Nothing is allocated twice. The client sees the total and pays; they never deal with the vendor.</p>
               <div className="list">
                 {options.map((o, i) => (
                   <div className={'card option-card' + (i === 0 ? ' best' : '')} key={o.kind + (o.vendorId ?? '')}>
@@ -1032,12 +1150,13 @@ export function RepRequest({ job: j }: { job: Job }) {
                       </div>
                     </div>
                     <div className="small mt6">
-                      {o.total > funds ? <span className="warn-ink">{formatNaira(o.total - funds)} over the money held · client approval needed</span> : `${formatNaira(funds - o.total)} under budget`}
-                      {o.substitutions ? ` · ${o.substitutions} substitution${o.substitutions > 1 ? 's' : ''}` : ''}
+                      Client pays {formatNaira(planDue(j, o.total))}
+                      {j.escrow < (j.serviceFee ?? 0) ? ' (with workmanship)' : ''}
+                      {o.substitutions ? ` · ${o.substitutions} substitute${o.substitutions > 1 ? 's' : ''} for the artisan to check` : ''}
                       {!o.complete ? ` · partial: ${o.uncovered.length} item${o.uncovered.length > 1 ? 's' : ''} stay in sourcing` : ''}
                     </div>
-                    <button className="btn primary sm mt8" onClick={() => dispatch({ type: 'recommendPlan', jobId: j.id, kind: o.kind, vendorId: o.vendorId }, 'Plan sent to the artisan to confirm.')}>
-                      Recommend this plan
+                    <button className="btn primary sm mt8" onClick={() => dispatch({ type: 'recommendPlan', jobId: j.id, kind: o.kind, vendorId: o.vendorId }, o.substitutions ? 'Sent to the artisan to check the substitute.' : 'Quotation sent to the client.')}>
+                      Send this quotation to the client
                     </button>
                   </div>
                 ))}
@@ -1057,6 +1176,18 @@ export function RepRequest({ job: j }: { job: Job }) {
           </div>
         </>
       )}
+      <h3>Messages</h3>
+      <MessageThread job={j} thread="client" title={`Client · ${client.name}`} />
+      {vendorThreads.map((vid) => (
+        <MessageThread key={vid} job={j} thread={vid} title={`Vendor · ${state.users[vid]?.name ?? ''}`} />
+      ))}
+      {sp.repRating && (
+        <div className="card mt10">
+          <b className="t13">Client's rating of you: ★ {sp.repRating.stars}</b>
+          {sp.repRating.text && <p className="small m0">“{sp.repRating.text}”</p>}
+        </div>
+      )}
+
       <h3>Audit trail</h3>
       <ol className="timeline">
         {j.history
@@ -1102,7 +1233,6 @@ function OfferCard({ supply, offer }: { supply: Supply; offer: SupplyOffer }) {
       <div className="quote mt6">
         {offer.items.map((i) => {
           const l = supply.lines.find((x) => x.id === i.lineId)!;
-          const diff = i.unitPrice - l.budgetPrice;
           return (
             <div className="q-row" key={i.lineId}>
               <span>
@@ -1114,7 +1244,7 @@ function OfferCard({ supply, offer }: { supply: Supply; offer: SupplyOffer }) {
                   l.name
                 )}
                 <small>
-                  {i.qty} × {formatNaira(i.unitPrice)} · {diff === 0 ? 'at budget' : diff < 0 ? `${formatNaira(-diff)} under budget` : `${formatNaira(diff)} over budget`}
+                  {i.qty} of {l.qty} × {formatNaira(i.unitPrice)}
                 </small>
               </span>
               <b>{formatNaira(i.qty * i.unitPrice)}</b>

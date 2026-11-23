@@ -265,12 +265,16 @@ export function billableMaterials(lines: QuoteLine[], delivered: QuoteLine[]): {
   return { billable, covered };
 }
 
-/** What the client pays when accepting a bid, after anything Allyfe already holds for the job. */
+/**
+ * What happens to money when the client accepts a bid. Materials are priced later by market vendors,
+ * so when anything has to be bought nothing is paid yet: the client pays once the Allyfe representative
+ * sends the best vendor quotation. With no materials to buy, the service fee is paid now
+ * (less anything Allyfe already holds for this job).
+ */
 export function bidCharge(job: Pick<Job, 'escrow' | 'deliveredMaterials'>, bid: { lines: QuoteLine[]; serviceFee: number }) {
   const { billable, covered } = billableMaterials(bid.lines, job.deliveredMaterials);
-  const materials = linesTotal(billable);
-  const total = materials + bid.serviceFee;
-  return { billable, covered, materials, coveredValue: linesTotal(covered), serviceFee: bid.serviceFee, total, alreadyHeld: job.escrow, due: total - job.escrow };
+  const payNow = billable.length === 0;
+  return { billable, covered, serviceFee: bid.serviceFee, alreadyHeld: job.escrow, payNow, due: payNow ? bid.serviceFee - job.escrow : 0 };
 }
 
 /* ---------------- ratings & ranking ---------------- */
@@ -335,7 +339,7 @@ export const fullAddress = (j: Pick<Job, 'addr' | 'city'>) => (j.addr.toLowerCas
 
 export const JOB_STATUS_LABEL: Record<Job['status'], string> = {
   open: 'Waiting for bids',
-  awarded: 'Waiting for a vendor',
+  awarded: 'Sourcing materials',
   materials_on_the_way: 'Materials on the way',
   ready: 'Materials delivered',
   in_progress: 'Work in progress',
@@ -373,8 +377,9 @@ export function journeySteps(job: Pick<Job, 'tier'>): JourneyStep[] {
   return [
     { key: 'posted', label: 'Job posted' },
     { key: 'bids', label: 'Bids received' },
-    { key: 'accepted', label: 'Bid accepted and paid' },
-    { key: 'vendor', label: 'Allyfe Supply sourcing materials' },
+    { key: 'accepted', label: 'Quotation accepted' },
+    { key: 'vendor', label: 'Market vendors pricing materials' },
+    { key: 'paid', label: 'Paid for materials and workmanship' },
     { key: 'delivered', label: 'Materials delivered' },
     { key: 'started', label: 'Work started' },
     { key: 'finished', label: 'Work finished' },
@@ -391,8 +396,11 @@ export function journeyIndex(job: Job): number {
   switch (job.status) {
     case 'open':
       return job.bids.some((b) => b.status === 'pending') ? at('accepted') : at('bids');
-    case 'awarded':
-      return at('vendor');
+    case 'awarded': {
+      const sp = job.supply;
+      if (sp && sp.orders.some((o) => o.status !== 'cancelled' && o.status !== 'declined')) return at('delivered');
+      return sp?.plan ? at('paid') : at('vendor');
+    }
     case 'materials_on_the_way':
       return at('delivered');
     case 'ready':
@@ -538,23 +546,29 @@ export function compareOffers(supply: Pick<Supply, 'lines' | 'orders' | 'offers'
   return options.sort((a, b) => Number(b.complete) - Number(a.complete) || a.total - b.total);
 }
 
-/** Money Allyfe still holds for materials on this job (escrow minus the service fee and unpaid orders already committed). */
+/**
+ * Money Allyfe holds for materials on this job that is not yet committed to a purchase order
+ * (escrow minus the service fee and unpaid orders). Negative when the service fee itself is not paid yet.
+ */
 export function supplyFunds(job: Pick<Job, 'escrow' | 'serviceFee' | 'supply'>): number {
   const committed = (job.supply?.orders ?? [])
     .filter((o) => ['issued', 'confirmed', 'dispatched'].includes(o.status))
     .reduce((s, o) => s + o.lines.reduce((t, l) => t + (o.status === 'issued' ? l.qty : (l.confirmed ?? l.qty)) * l.unitPrice, 0) + o.deliveryFee, 0);
-  return Math.max(0, job.escrow - (job.serviceFee ?? 0) - committed);
+  return job.escrow - (job.serviceFee ?? 0) - committed;
 }
 
 export const poTotal = (o: Pick<PurchaseOrder, 'lines' | 'deliveryFee' | 'status'>) =>
   o.lines.reduce((s, l) => s + (o.status === 'issued' ? l.qty : (l.confirmed ?? l.qty)) * l.unitPrice, 0) + o.deliveryFee;
 
 export const lineProgress = (l: SupplyLine) => `${l.delivered} of ${l.qty} ${l.unit}${l.qty === 1 ? '' : 's'}`;
+/** What the client pays to approve a plan (never negative; any saving is returned at the end). */
+export const planDue = (job: Pick<Job, 'escrow' | 'serviceFee' | 'supply'>, total: number) => Math.max(0, total - supplyFunds(job));
+
 export const offerTotal = (items: OfferItem[], deliveryFee: number) => items.reduce((s, i) => s + i.qty * i.unitPrice, 0) + deliveryFee;
 
 export const SUPPLY_STATUS_LABEL: Record<Supply['status'], string> = {
-  sourcing: 'Collecting vendor offers',
-  approval: 'Waiting for approvals',
+  sourcing: 'Vendors are pricing the materials',
+  approval: 'Quotation sent to the client',
   ordering: 'Purchase orders sent',
   delivering: 'Materials on the way',
   complete: 'All materials delivered',

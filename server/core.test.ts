@@ -38,7 +38,7 @@ describe('server core', () => {
     const r = await core.apply({ userId: 'a-chidi', action: { type: 'submitBid', jobId, bid: { lines: [{ key: 'el-socket', name: '', unit: '', unitPrice: 0, qty: 3 }], serviceFee: 15000, day, message: '' } }, now: Date.now(), nonce: 'n2aaaaaa' });
     expect(r.ok).toBe(true);
     expect(core.snapshot().state.jobs[0].bids[0].artisanId).toBe('a-chidi');
-    expect(core.snapshot().state.alerts['c-kenneth'][0].text).toMatch(/Chidi Amadi sent a quotation of ₦22,500/);
+    expect(core.snapshot().state.alerts['c-kenneth'][0].text).toMatch(/Chidi Amadi sent a quotation for “Fix sockets”/);
   });
 
   it('refuses broken rules with the reason and leaves the state alone', async () => {

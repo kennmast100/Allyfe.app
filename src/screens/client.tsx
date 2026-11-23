@@ -657,7 +657,12 @@ export function Projects() {
 }
 
 /* ---------------- Shared job parts ---------------- */
+/**
+ * An artisan's quotation: the materials list (quantity and spec, no prices: market vendors price them)
+ * and the workmanship. Delivered materials carry the price that was actually paid.
+ */
 export function QuoteTable({ lines, serviceFee, covered, showTotal = true, tier }: { lines: QuoteLine[]; serviceFee?: number; covered?: QuoteLine[]; showTotal?: boolean; tier?: Tier }) {
+  const priced = lines.some((l) => l.unitPrice > 0);
   const mat = linesTotal(lines);
   return (
     <div className="quote">
@@ -668,10 +673,11 @@ export function QuoteTable({ lines, serviceFee, covered, showTotal = true, tier 
             {l.name}
             {l.key.startsWith('custom:') && <span className="tag grey xs ml4">added</span>}
             <small>
-              {l.qty} × {formatNaira(l.unitPrice)}
+              {priced ? `${l.qty} × ${formatNaira(l.unitPrice)}` : `${l.qty} ${l.unit}${l.qty > 1 ? 's' : ''}`}
+              {l.spec ? ` · ${l.spec}` : ''}
             </small>
           </span>
-          <b>{formatNaira(lineTotal(l))}</b>
+          {priced ? <b>{formatNaira(lineTotal(l))}</b> : <span className="small">vendor price</span>}
         </div>
       ))}
       {covered?.map((l, i) => (
@@ -683,20 +689,29 @@ export function QuoteTable({ lines, serviceFee, covered, showTotal = true, tier 
           <b>₦0</b>
         </div>
       ))}
-      <div className="q-row sub">
-        <span>Materials</span>
-        <b>{formatNaira(mat)}</b>
-      </div>
+      {priced ? (
+        <div className="q-row sub">
+          <span>Materials</span>
+          <b>{formatNaira(mat)}</b>
+        </div>
+      ) : (
+        lines.length > 0 && (
+          <div className="q-row sub">
+            <span>Materials</span>
+            <span className="small">priced by market vendors</span>
+          </div>
+        )
+      )}
       {serviceFee != null && (
         <div className="q-row sub">
-          <span>Service fee{tier ? ` (${tier} job)` : ''}</span>
+          <span>Workmanship{tier ? ` (${tier} job)` : ''}</span>
           <b>{formatNaira(serviceFee)}</b>
         </div>
       )}
       {showTotal && serviceFee != null && (
         <div className="q-row tot">
-          <span>Total</span>
-          <b>{formatNaira(mat + serviceFee)}</b>
+          <span>{priced || !lines.length ? 'Total' : 'Workmanship total'}</span>
+          <b>{formatNaira((priced ? mat : 0) + serviceFee)}</b>
         </div>
       )}
     </div>
@@ -828,16 +843,24 @@ export function ClientJob({ job: j }: { job: Job }) {
       const anyPaid = j.supply?.orders.some((o) => o.status === 'received');
       focus = (
         <div className={'focus' + (j.status === 'materials_on_the_way' ? ' warn' : '')}>
-          <h4>{j.status === 'materials_on_the_way' ? 'Materials are on the way' : 'Allyfe Supply is sourcing your materials'}</h4>
+          <h4>
+            {j.status === 'materials_on_the_way'
+              ? 'Materials are on the way'
+              : j.supply?.plan && !j.supply.plan.clientOkAt && (!j.supply.plan.needsArtisan || j.supply.plan.artisanOkAt)
+                ? 'Your materials quotation is ready'
+                : j.supply?.orders.some((o) => ['issued', 'confirmed'].includes(o.status))
+                  ? 'Paid · vendors are preparing your materials'
+                  : 'Market vendors are pricing your materials'}
+          </h4>
           <p>
             {j.status === 'materials_on_the_way'
               ? 'Check every item when it arrives, then confirm what you received below. Vendors are paid only for what you accept.'
-              : `Registered vendors in ${j.city} are competing to supply the materials. Everything arrives before ${af} comes on `}
+              : `Your Allyfe representative deals with the vendors for you. Everything arrives before ${af} comes on `}
             {j.status !== 'materials_on_the_way' && <b>{dayLabel(j.scheduledDay!)}</b>}
           </p>
           {j.status === 'awarded' && (
-            <button className="btn secondary" onClick={() => confirm(anyPaid ? 'Cancel and refund everything not yet delivered?' : 'Cancel and get a full refund? Nothing has been delivered yet.') && dispatch({ type: 'requestRefund', jobId: j.id }, 'Cancelled. Your money is back in your wallet.')}>
-              {anyPaid ? 'Cancel and refund the rest' : 'Cancel and get a full refund'}
+            <button className="btn secondary" onClick={() => confirm(anyPaid ? 'Cancel and refund everything not yet delivered?' : j.escrow ? 'Cancel and get a full refund? Nothing has been delivered yet.' : 'Cancel this job? You have not paid anything yet.') && dispatch({ type: 'requestRefund', jobId: j.id }, 'Cancelled. Your money is back in your wallet.')}>
+              {anyPaid ? 'Cancel and refund the rest' : j.escrow ? 'Cancel and get a full refund' : 'Cancel this job'}
             </button>
           )}
         </div>
@@ -931,7 +954,7 @@ export function ClientJob({ job: j }: { job: Job }) {
           <div className="card option">
             <b className="t14">Choose another artisan</b>
             <p className="small m0">
-              Get new bids. {delivered ? `The ${formatNaira(delivered)} of materials already at your home is taken off the new quotation, ` : ''}and the money still held counts toward it. You pay any extra, or get the difference back.
+              Get new bids. {delivered ? `The ${formatNaira(delivered)} of materials already at your home is taken off the new materials list, ` : ''}and the money still held counts toward what you pay next. You pay any extra, or get the difference back.
             </p>
             <button className="btn primary mt8" onClick={() => dispatch({ type: 'chooseAnotherArtisan', jobId: j.id }, 'Artisans have been notified.')}>
               Find another artisan
@@ -1035,12 +1058,12 @@ function BidRow({ bid: b, job }: { bid: Bid; job: Job }) {
           <Stars rating={a.rating} count={a.ratingCount} /> · {dayLabel(b.day)}
         </div>
         <div className="small">
-          Materials {formatNaira(c.materials)} · Fee {formatNaira(b.serviceFee)}
+          {c.billable.length ? `${c.billable.length} material${c.billable.length > 1 ? 's' : ''} · priced by vendors` : 'No materials to buy'}
         </div>
       </div>
       <span className="tr">
-        <b className="t14">{formatNaira(c.total)}</b>
-        <div className="small">View</div>
+        <b className="t14">{formatNaira(b.serviceFee)}</b>
+        <div className="small">workmanship</div>
       </span>
     </button>
   );
@@ -1072,10 +1095,15 @@ export function BidReview({ jobId, bidId }: { jobId: string; bidId: string }) {
       <div className="card">
         <QuoteTable lines={c.billable} covered={c.covered} serviceFee={b.serviceFee} tier={j.tier} />
       </div>
+      {!c.payNow ? (
+        <Notice tone="info" icon="i">
+          <b>Nothing to pay yet.</b> When you accept, the materials list goes to market vendors in {j.city}, who add today's prices. Your Allyfe representative picks the best vendor and sends you one total (materials, delivery and {af}'s workmanship) to pay. Delivery starts once you pay. {af} is paid only when you tap <b>Job done</b>.
+        </Notice>
+      ) : (
       <div className="card money mt10">
         <div>
-          <span>Quotation total</span>
-          <b>{formatNaira(c.total)}</b>
+          <span>Workmanship</span>
+          <b>{formatNaira(b.serviceFee)}</b>
         </div>
         {c.alreadyHeld > 0 && (
           <div>
@@ -1089,11 +1117,13 @@ export function BidReview({ jobId, bidId }: { jobId: string; bidId: string }) {
         </div>
         <div className="small">Wallet balance: {formatNaira(bal)}</div>
       </div>
+      )}
       {c.due > bal && <Notice>Your wallet needs {formatNaira(c.due - bal)} more. Top up first.</Notice>}
-      <Notice tone="info" icon="i">
-        Allyfe holds the money. {c.billable.length ? `The materials list goes to vendors in ${j.city}; the vendor is paid when you confirm delivery. ` : ''}
-        {af} is paid only when you tap <b>Job done</b>.
-      </Notice>
+      {c.payNow && (
+        <Notice tone="info" icon="i">
+          Allyfe holds the money. {af} is paid only when you tap <b>Job done</b>.
+        </Notice>
+      )}
       {c.due > bal ? (
         <button className="btn orange" onClick={() => dispatch({ type: 'topUp', amount: Math.ceil((c.due - bal) / 10000) * 10000 }, 'Wallet topped up.')}>
           Top up {formatNaira(Math.ceil((c.due - bal) / 10000) * 10000)}
@@ -1105,7 +1135,7 @@ export function BidReview({ jobId, bidId }: { jobId: string; bidId: string }) {
             if (dispatch({ type: 'acceptBid', jobId: j.id, bidId: b.id }, `You accepted ${af}'s bid.`)) go({ name: 'job', jobId: j.id });
           }}
         >
-          Accept and pay {formatNaira(Math.max(0, c.due))}
+          {c.payNow ? `Accept and pay ${formatNaira(Math.max(0, c.due))}` : `Accept ${af}'s quotation`}
         </button>
       )}
     </>

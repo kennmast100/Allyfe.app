@@ -50,18 +50,19 @@ function awarded() {
 const J = (s: AppState, id: string) => s.jobs.find((j) => j.id === id)!;
 const lineOf = (j: Job, key: string) => j.supply!.lines.find((l) => l.key === key)!;
 /** A vendor offers every outstanding line at the given unit prices (default: the quoted budget price). */
+/** Today's market prices used in these tests (shower mixer 25,000; PTFE tape 300; sealant 2,500: ₦28,100 for the standard job). */
+const PRICE: Record<string, number> = { 'pl-shower': 25000, 'pl-ptfe': 300, 'custom:silicone sealant': 2500, 'pl-elbow': 300, 'pa-emul': 30000 };
 function offerAll(s: AppState, jobId: string, vendorId: string, prices: Record<string, number> = {}, deliveryFee = 0) {
   const j = J(s, jobId);
   const need = supplyNeed(j.supply!);
-  const items = j.supply!.lines.filter((l) => need[l.id] > 0).map((l) => ({ lineId: l.id, qty: need[l.id], unitPrice: prices[l.key] ?? l.budgetPrice }));
+  const items = j.supply!.lines.filter((l) => need[l.id] > 0).map((l) => ({ lineId: l.id, qty: need[l.id], unitPrice: prices[l.key] ?? PRICE[l.key] ?? 1000 }));
   return as(s, vendorId, { type: 'submitOffer', jobId, items, deliveryFee, deliveryDays: 1, note: '' });
 }
-/** Rep recommends, artisan confirms, (client approves if needed), rep authorizes. */
+/** Rep picks the vendor(s) and sends the quotation; artisan checks any substitute; the client pays, which issues the purchase orders. */
 function approveAndOrder(s: AppState, jobId: string, kind: 'single' | 'combined', vendorId?: string) {
   s = as(s, 'r-ifeoma', { type: 'recommendPlan', jobId, kind, vendorId });
-  s = as(s, J(s, jobId).artisanId!, { type: 'artisanReviewSupply', jobId, ok: true, note: '' });
-  if (J(s, jobId).supply!.plan!.needsClient) s = as(s, J(s, jobId).clientId, { type: 'clientReviewSupply', jobId, ok: true, note: '' });
-  return as(s, 'r-ifeoma', { type: 'authorizeSupply', jobId });
+  if (J(s, jobId).supply!.plan!.needsArtisan) s = as(s, J(s, jobId).artisanId!, { type: 'artisanReviewSupply', jobId, ok: true, note: '' });
+  return as(s, J(s, jobId).clientId, { type: 'clientReviewSupply', jobId, ok: true, note: '' });
 }
 /** Oil Mill supplies everything at budget price; Kenneth receives it. */
 function delivered() {
@@ -127,10 +128,14 @@ describe('posting', () => {
 });
 
 describe('bidding', () => {
-  it('prices catalogue items from the list, not from the phone', () => {
+  it('names catalogue items from the list; artisans give quantities and specs, never material prices', () => {
     let { s, job } = posted();
-    s = as(s, 'a-ibrahim', { type: 'submitBid', jobId: job.id, bid: bid({ lines: [{ key: 'pl-shower', name: 'x', unit: 'x', unitPrice: 1, qty: 1 }] }) });
-    expect(s.jobs[0].bids[0].lines[0]).toMatchObject({ name: 'Shower mixer set', unitPrice: 25000 });
+    s = as(s, 'a-ibrahim', { type: 'submitBid', jobId: job.id, bid: bid({ lines: [{ key: 'pl-shower', name: 'x', unit: 'x', unitPrice: 99999, qty: 1, spec: 'Chrome' }, { key: 'custom:x', name: 'Silicone sealant', unit: 'tube', unitPrice: 0, qty: 1 }] }) });
+    expect(s.jobs[0].bids[0].lines).toEqual([
+      { key: 'pl-shower', name: 'Shower mixer set', unit: 'set', unitPrice: 0, qty: 1, spec: 'Chrome' },
+      { key: 'custom:silicone sealant', name: 'Silicone sealant', unit: 'tube', unitPrice: 0, qty: 1 },
+    ]);
+    expect(s.alerts['c-kenneth'][0].text).toMatch(/₦20,000 workmanship and 2 materials for market vendors to price/);
   });
   it('keeps artisans in other cities and trades out', () => {
     const { s, job } = posted();
@@ -147,8 +152,9 @@ describe('the full journey', () => {
   it('accept → Allyfe Supply → delivered → started → finished → job done → rated, with the right payouts', () => {
     let { s, job } = awarded();
     expect(J(s, job.id).status).toBe('awarded');
-    expect(J(s, job.id).escrow).toBe(48100);
-    expect(s.wallets['c-kenneth']).toBe(400000 - 48100);
+    // Accepting costs nothing yet: market vendors still have to price the materials.
+    expect(J(s, job.id).escrow).toBe(0);
+    expect(s.wallets['c-kenneth']).toBe(400000);
     const sp = J(s, job.id).supply!;
     expect(sp).toMatchObject({ status: 'sourcing', repId: 'r-ifeoma' });
     expect(sp.lines.map((l) => [l.key, l.qty])).toEqual([['pl-shower', 1], ['pl-ptfe', 2], ['custom:silicone sealant', 1]]);
@@ -157,7 +163,13 @@ describe('the full journey', () => {
     expect((s.alerts['v-glass'] ?? []).some((a) => a.jobId === job.id)).toBe(false); // doesn't sell plumbing materials
 
     s = offerAll(s, job.id, 'v-oilmill');
-    s = approveAndOrder(s, job.id, 'single', 'v-oilmill');
+    s = as(s, 'r-ifeoma', { type: 'recommendPlan', jobId: job.id, kind: 'single', vendorId: 'v-oilmill' });
+    // The rep sends one total: ₦28,100 materials + ₦20,000 workmanship.
+    expect(J(s, job.id).supply!.plan).toMatchObject({ total: 28100, due: 48100, needsArtisan: false });
+    expect(s.alerts['c-kenneth'][0].text).toMatch(/Pay ₦48,100/);
+    s = as(s, 'c-kenneth', { type: 'clientReviewSupply', jobId: job.id, ok: true, note: '' });
+    expect(s.wallets['c-kenneth']).toBe(400000 - 48100);
+    expect(J(s, job.id).escrow).toBe(48100);
     const po = J(s, job.id).supply!.orders[0];
     expect(po).toMatchObject({ vendorId: 'v-oilmill', status: 'issued' });
     s = as(s, 'v-oilmill', { type: 'confirmPO', jobId: job.id, poId: po.id, confirmed: {} }, { type: 'dispatchPO', jobId: job.id, poId: po.id, waybill: 'Rider Musa' });
@@ -251,9 +263,14 @@ describe('no-shows', () => {
     });
     const walletBefore = s.wallets['c-kenneth'];
     s = as(s, 'c-kenneth', { type: 'acceptBid', jobId: job.id, bidId: s.jobs[0].bids.find((b) => b.artisanId === 'a-femi')!.id });
-    // Due: 600 (elbows) + 25,000 fee − 20,000 already held = 5,600.
+    expect(s.wallets['c-kenneth']).toBe(walletBefore);
+    expect(s.jobs[0].supply!.lines.map((l) => [l.key, l.qty])).toEqual([['pl-elbow', 2]]);
+    // Elbows priced at 300 each: 600 + 25,000 workmanship − 20,000 already held = 5,600 to pay.
+    s = offerAll(s, job.id, 'v-oilmill');
+    s = as(s, 'r-ifeoma', { type: 'recommendPlan', jobId: job.id, kind: 'single', vendorId: 'v-oilmill' });
+    expect(s.jobs[0].supply!.plan!.due).toBe(5600);
+    s = as(s, 'c-kenneth', { type: 'clientReviewSupply', jobId: job.id, ok: true, note: '' });
     expect(s.wallets['c-kenneth']).toBe(walletBefore - 5600);
-    expect(s.jobs[0].supply!.lines.map((l) => [l.key, l.qty, l.budgetPrice])).toEqual([['pl-elbow', 2, 300]]);
   });
 
   it('refunds the difference when the new artisan costs less', () => {
@@ -291,7 +308,7 @@ describe('Allyfe Supply demo data', () => {
     expect(st('j-v5')).toEqual(['awarded', 'sourcing']);
     expect(st('j-v4')).toEqual(['ready', 'complete']);
     expect(J(s, 'j-v5').supply!.orders[0]).toMatchObject({ vendorId: 'v-mile3', status: 'refused' });
-    expect(J(s, 'j-v6').supply!.plan).toMatchObject({ extra: 15000, substitutions: 1, needsClient: true });
+    expect(J(s, 'j-v6').supply!.plan).toMatchObject({ total: 125000, due: 125000 + 45000, substitutions: 1, needsArtisan: true });
     expect(J(s, 'j-v6').supply!.plan!.artisanOkAt).toBeDefined();
     expect(J(s, 'j-v4').escrow).toBe(J(s, 'j-v4').serviceFee); // only the service fee is left
     expect(s.wallets['c-kenneth']).toBe(400000);
@@ -305,7 +322,9 @@ describe('Allyfe Supply demo data', () => {
     s = as(s, 'v-mile3', { type: 'confirmPO', jobId: 'j-v2', poId: po2.id, confirmed: {} }, { type: 'collectRefusedPO', jobId: 'j-v5', poId: J(s, 'j-v5').supply!.orders[0].id });
     s = as(s, 'c-kenneth', { type: 'receivePO', jobId: 'j-v3', poId: J(s, 'j-v3').supply!.orders[0].id, received: {} }, { type: 'clientReviewSupply', jobId: 'j-v6', ok: true, note: '' });
     expect(J(s, 'j-v3').status).toBe('ready');
-    s = as(s, 'r-ifeoma', { type: 'authorizeSupply', jobId: 'j-v6' }, { type: 'recommendPlan', jobId: 'j-v5', kind: 'single', vendorId: 'v-oilmill' }, { type: 'recommendPlan', jobId: 'j-v1', kind: 'combined' });
+    s = as(s, 'r-ifeoma', { type: 'recommendPlan', jobId: 'j-v5', kind: 'single', vendorId: 'v-oilmill' }, { type: 'recommendPlan', jobId: 'j-v1', kind: 'combined' });
+    // Kenneth already paid for the refused fittings, so the new Oil Mill quotation needs only the difference.
+    expect(J(s, 'j-v5').supply!.plan!.due).toBe(21200 - 17500);
     expect(J(s, 'j-v6').supply!.orders[0].vendorId).toBe('v-mile3');
     expect(new Set(J(s, 'j-v1').supply!.plan!.allocations.map((a) => a.vendorId))).toEqual(new Set(['v-mile3', 'v-oilmill']));
   });
@@ -338,15 +357,36 @@ describe('Allyfe Supply rules', () => {
     expect(J(s, job.id).supply!.orders.map((o) => o.vendorId)).toEqual(['v-mile3']);
   });
 
-  it('only the representative recommends and authorizes; artisan and client approvals come first', () => {
+  it('only the representative picks vendors; nothing is ordered until the client pays', () => {
     let { s, job } = awarded();
     s = offerAll(s, job.id, 'v-oilmill');
     expect(() => as(s, 'a-ibrahim', { type: 'recommendPlan', jobId: job.id, kind: 'single', vendorId: 'v-oilmill' })).toThrow(/Only reps/);
+    expect(() => as(s, 'c-kenneth', { type: 'recommendPlan', jobId: job.id, kind: 'single', vendorId: 'v-oilmill' })).toThrow(/Only reps/);
+    expect(() => as(s, 'c-kenneth', { type: 'clientReviewSupply', jobId: job.id, ok: true, note: '' })).toThrow(/no materials quotation/);
     s = as(s, 'r-ifeoma', { type: 'recommendPlan', jobId: job.id, kind: 'single', vendorId: 'v-oilmill' });
-    expect(() => as(s, 'r-ifeoma', { type: 'authorizeSupply', jobId: job.id })).toThrow(/artisan/);
-    s = as(s, 'a-ibrahim', { type: 'artisanReviewSupply', jobId: job.id, ok: true, note: '' });
-    s = as(s, 'r-ifeoma', { type: 'authorizeSupply', jobId: job.id });
+    expect(J(s, job.id).supply!.orders).toEqual([]);
+    expect(J(s, job.id).supply!.status).toBe('approval');
+    s = as(s, 'c-kenneth', { type: 'clientReviewSupply', jobId: job.id, ok: true, note: '' });
     expect(J(s, job.id).supply!.status).toBe('ordering');
+  });
+
+  it('lets the client cancel for free before paying', () => {
+    let { s, job } = awarded();
+    s = offerAll(s, job.id, 'v-oilmill');
+    s = as(s, 'c-kenneth', { type: 'requestRefund', jobId: job.id });
+    expect(s.wallets['c-kenneth']).toBe(400000);
+    expect(J(s, job.id)).toMatchObject({ status: 'refunded', escrow: 0 });
+    expect(J(s, job.id).supply!.status).toBe('cancelled');
+  });
+
+  it('asks the client to decline and get another option', () => {
+    let { s, job } = awarded();
+    s = offerAll(s, job.id, 'v-oilmill');
+    s = as(s, 'r-ifeoma', { type: 'recommendPlan', jobId: job.id, kind: 'single', vendorId: 'v-oilmill' });
+    s = as(s, 'c-kenneth', { type: 'clientReviewSupply', jobId: job.id, ok: false, note: 'Too dear' });
+    expect(J(s, job.id).supply).toMatchObject({ status: 'sourcing', plan: undefined });
+    expect(s.wallets['c-kenneth']).toBe(400000);
+    expect(s.alerts['r-ifeoma'][0].text).toMatch(/Too dear/);
   });
 
   it('asks the client to approve, and pay for, any extra cost or substitution', () => {
@@ -361,20 +401,24 @@ describe('Allyfe Supply rules', () => {
       ],
     });
     s = as(s, 'r-ifeoma', { type: 'recommendPlan', jobId: job.id, kind: 'single', vendorId: 'v-oilmill' });
-    expect(J(s, job.id).supply!.plan).toMatchObject({ extra: 4000, substitutions: 1, needsClient: true });
+    // 27,000 + 600 + 2,500 + 2,000 delivery = 32,100 materials, plus 20,000 workmanship.
+    expect(J(s, job.id).supply!.plan).toMatchObject({ total: 32100, due: 52100, substitutions: 1, needsArtisan: true });
+    expect(s.alerts['a-ibrahim'][0].text).toMatch(/substitute/);
     expect(() => as(s, 'c-kenneth', { type: 'clientReviewSupply', jobId: job.id, ok: true, note: '' })).toThrow(/artisan has to confirm/);
     s = as(s, 'a-ibrahim', { type: 'artisanReviewSupply', jobId: job.id, ok: true, note: '' });
-    expect(() => as(s, 'r-ifeoma', { type: 'authorizeSupply', jobId: job.id })).toThrow(/client/);
     const before = s.wallets['c-kenneth'];
     s = as(s, 'c-kenneth', { type: 'clientReviewSupply', jobId: job.id, ok: true, note: '' });
-    expect(s.wallets['c-kenneth']).toBe(before - 4000);
-    s = as(s, 'r-ifeoma', { type: 'authorizeSupply', jobId: job.id });
+    expect(s.wallets['c-kenneth']).toBe(before - 52100);
     expect(J(s, job.id).supply!.orders[0].lines[0]).toMatchObject({ substitute: 'Shower mixer, Grohe', unitPrice: 27000 });
   });
 
-  it('lets the artisan send a plan back for re-sourcing', () => {
+  it('lets the artisan send a substitute back for re-sourcing', () => {
     let { s, job } = awarded();
-    s = offerAll(s, job.id, 'v-oilmill');
+    const j = J(s, job.id);
+    s = as(s, 'v-oilmill', {
+      type: 'submitOffer', jobId: job.id, deliveryFee: 0, deliveryDays: 1, note: '',
+      items: [{ lineId: lineOf(j, 'pl-shower').id, qty: 1, unitPrice: 20000, substitute: 'Bath mixer' }, { lineId: lineOf(j, 'pl-ptfe').id, qty: 2, unitPrice: 300 }, { lineId: lineOf(j, 'custom:silicone sealant').id, qty: 1, unitPrice: 2500 }],
+    });
     s = as(s, 'r-ifeoma', { type: 'recommendPlan', jobId: job.id, kind: 'single', vendorId: 'v-oilmill' });
     expect(() => as(s, 'a-ibrahim', { type: 'artisanReviewSupply', jobId: job.id, ok: false, note: '' })).toThrow(/what is wrong/);
     s = as(s, 'a-ibrahim', { type: 'artisanReviewSupply', jobId: job.id, ok: false, note: 'Wrong mixer type' });
@@ -421,21 +465,31 @@ describe('Allyfe Supply rules', () => {
 
   it('returns unspent materials money to the client when everything is delivered', () => {
     let { s, job } = awarded();
-    s = offerAll(s, job.id, 'v-oilmill', { 'pl-shower': 22000 }); // ₦3,000 under budget
+    s = offerAll(s, job.id, 'v-oilmill');
     s = approveAndOrder(s, job.id, 'single', 'v-oilmill');
     const po = J(s, job.id).supply!.orders[0];
-    s = as(s, 'v-oilmill', { type: 'confirmPO', jobId: job.id, poId: po.id, confirmed: {} }, { type: 'dispatchPO', jobId: job.id, poId: po.id, waybill: 'GIG 2' });
-    const before = s.wallets['c-kenneth'];
+    const ptfe = lineOf(J(s, job.id), 'pl-ptfe').id;
+    // Oil Mill only has 1 PTFE roll after all; Mile 3 supplies the other one cheaper.
+    s = as(s, 'v-oilmill', { type: 'confirmPO', jobId: job.id, poId: po.id, confirmed: { [ptfe]: 1 } }, { type: 'dispatchPO', jobId: job.id, poId: po.id, waybill: 'GIG 2' });
     s = as(s, 'c-kenneth', { type: 'receivePO', jobId: job.id, poId: po.id, received: {} });
-    expect(s.wallets['c-kenneth']).toBe(before + 3000);
-    expect(J(s, job.id).supply!.refunded).toBe(3000);
+    s = offerAll(s, job.id, 'v-mile3', { 'pl-ptfe': 200 });
+    s = as(s, 'r-ifeoma', { type: 'recommendPlan', jobId: job.id, kind: 'single', vendorId: 'v-mile3' });
+    expect(J(s, job.id).supply!.plan!.due).toBe(0); // already paid for
+    s = as(s, 'c-kenneth', { type: 'clientReviewSupply', jobId: job.id, ok: true, note: '' });
+    const po2 = J(s, job.id).supply!.orders[1];
+    s = as(s, 'v-mile3', { type: 'confirmPO', jobId: job.id, poId: po2.id, confirmed: {} }, { type: 'dispatchPO', jobId: job.id, poId: po2.id, waybill: 'Rider' });
+    const before = s.wallets['c-kenneth'];
+    s = as(s, 'c-kenneth', { type: 'receivePO', jobId: job.id, poId: po2.id, received: {} });
+    expect(s.wallets['c-kenneth']).toBe(before + 100);
+    expect(J(s, job.id).supply!.refunded).toBe(100);
     expect(J(s, job.id).escrow).toBe(20000);
+    expect(J(s, job.id).deliveredMaterials.find((m) => m.key === 'pl-ptfe')).toMatchObject({ qty: 2, unitPrice: 250 });
   });
 
   it('keeps an auditable record of every step', () => {
     const { s, job } = delivered();
     const log = J(s, job.id).history.map((h) => h.label).join('\n');
-    for (const step of [/Supply request SR-/, /offered the full list/, /recommended complete supply/, /Artisan confirmed/, /authorized the allocation/, /confirmed PO-.*stock reserved/, /dispatched/, /Client received PO-/, /All materials delivered and reconciled/])
+    for (const step of [/Supply request SR-/, /offered the full list/, /picked one vendor/, /Client approved the quotation and paid ₦48,100/, /1 purchase order issued/, /confirmed PO-.*stock reserved/, /dispatched/, /Client received PO-/, /All materials delivered and reconciled/])
       expect(log).toMatch(step);
   });
 
@@ -482,6 +536,38 @@ describe('Allyfe fee', () => {
     expect(s.wallets['a-ibrahim']).toBe(before + 27000);
     expect(s.wallets['allyfe']).toBe(3000);
     expect(s.wallets['c-kenneth']).toBe(400000 - 30000); // the client pays the quoted fee, nothing extra
+  });
+});
+
+describe('communication through the representative', () => {
+  it('carries client ↔ rep and vendor ↔ rep messages, never client ↔ vendor', () => {
+    let { s, job } = awarded();
+    s = offerAll(s, job.id, 'v-oilmill');
+    s = as(s, 'c-kenneth', { type: 'sendSupplyMessage', jobId: job.id, thread: 'v-oilmill', text: 'Is it chrome?' });
+    s = as(s, 'v-oilmill', { type: 'sendSupplyMessage', jobId: job.id, thread: 'client', text: 'Yes sir' });
+    const m = J(s, job.id).supply!.messages;
+    // Whatever thread they ask for, a client only writes to the rep and a vendor only to the rep.
+    expect(m.map((x) => [x.thread, x.from])).toEqual([['client', 'c-kenneth'], ['v-oilmill', 'v-oilmill']]);
+    expect(s.alerts['r-ifeoma'][0].text).toMatch(/Oil Mill.*Yes sir/);
+    expect(s.alerts['v-oilmill'].some((a) => /chrome/.test(a.text))).toBe(false);
+    s = as(s, 'r-ifeoma', { type: 'sendSupplyMessage', jobId: job.id, thread: 'client', text: 'Yes, chrome finish.' });
+    expect(s.alerts['c-kenneth'][0].text).toMatch(/Ifeoma Briggs \(Allyfe representative\).*chrome finish/);
+    expect(() => as(s, 'a-ibrahim', { type: 'sendSupplyMessage', jobId: job.id, thread: 'client', text: 'hi' })).toThrow(/Allyfe representative/);
+    expect(() => as(s, 'v-glass', { type: 'sendSupplyMessage', jobId: job.id, thread: 'v-glass', text: 'hi' })).toThrow(/not for your shop/);
+  });
+
+  it('lets the client rate the representative once the materials are in, for their appraisal', () => {
+    let { s, job } = awarded();
+    expect(() => as(s, 'c-kenneth', { type: 'rateRep', jobId: job.id, stars: 5, text: '' })).toThrow(/once all the materials/);
+    ({ s } = delivered());
+    const id = s.jobs[0].id;
+    const before = s.users['r-ifeoma'] as { rating: number; ratingCount: number };
+    s = as(s, 'c-kenneth', { type: 'rateRep', jobId: id, stars: 4, text: 'Quick updates' });
+    const r = s.users['r-ifeoma'] as { rating: number; ratingCount: number };
+    expect(r.ratingCount).toBe(before.ratingCount + 1);
+    expect(J(s, id).supply!.repRating).toMatchObject({ stars: 4, text: 'Quick updates' });
+    expect(() => as(s, 'c-kenneth', { type: 'rateRep', jobId: id, stars: 5, text: '' })).toThrow(/already reviewed/);
+    expect(s.alerts['r-ifeoma'][0].text).toMatch(/★ 4/);
   });
 });
 

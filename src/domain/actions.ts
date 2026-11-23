@@ -6,7 +6,7 @@ import {
   JOB_ROLES,
   compareOffers,
   serviceName,
-  supplyFunds,
+  planDue,
   supplyNeed,
   avatarFor,
   displayPhone,
@@ -25,7 +25,6 @@ import {
   formatNaira,
   isOnOrAfterDay,
   jobStars,
-  linesTotal,
   MATERIAL_REJECT_REASONS,
   misdescribedSplit,
 } from './rules';
@@ -91,13 +90,14 @@ export type Action =
   | { type: 'withdrawPlan'; jobId: string }
   | { type: 'artisanReviewSupply'; jobId: string; ok: boolean; note: string }
   | { type: 'clientReviewSupply'; jobId: string; ok: boolean; note: string }
-  | { type: 'authorizeSupply'; jobId: string }
   | { type: 'confirmPO'; jobId: string; poId: string; confirmed: Record<string, number> }
   | { type: 'declinePO'; jobId: string; poId: string; note: string }
   | { type: 'dispatchPO'; jobId: string; poId: string; waybill: string }
   | { type: 'receivePO'; jobId: string; poId: string; received: Record<string, number> }
   | { type: 'refusePO'; jobId: string; poId: string; reason: string; note: string }
   | { type: 'collectRefusedPO'; jobId: string; poId: string }
+  | { type: 'sendSupplyMessage'; jobId: string; thread: string; text: string }
+  | { type: 'rateRep'; jobId: string; stars: number; text: string }
   | { type: 'startWork'; jobId: string }
   | { type: 'flagMisdescribed'; jobId: string }
   | { type: 'finishWork'; jobId: string }
@@ -215,7 +215,15 @@ export function reduce(prev: AppState, action: Action, now = Date.now(), nonce?:
         j.escrow -= leftover;
         sp.refunded = leftover;
       }
-      j.deliveredMaterials.push(...sp.lines.map((l) => ({ key: l.key, name: l.name, unit: l.unit, unitPrice: l.budgetPrice, qty: l.delivered, spec: l.spec })));
+      j.deliveredMaterials.push(
+        ...sp.lines.map((l) => {
+          // What was actually paid per unit, from the received purchase orders.
+          const got = sp.orders.flatMap((o) => (o.status === 'received' ? o.lines.filter((x) => x.lineId === l.id && x.received) : []));
+          const paid = got.reduce((t, x) => t + x.received! * x.unitPrice, 0);
+          const qty = got.reduce((t, x) => t + x.received!, 0);
+          return { key: l.key, name: l.name, unit: l.unit, unitPrice: qty ? Math.round(paid / qty) : 0, qty: l.delivered, spec: l.spec };
+        }),
+      );
       j.status = 'ready';
       log(j, `All materials delivered and reconciled${leftover > 0 ? ` · ${formatNaira(leftover)} savings returned to client` : ''}`, 'Allyfe Supply');
       alert(j.artisanId!, `All materials for “${j.title}” are at the client's home. Go and start work on ${j.scheduledDay}. Address: ${j.addr}.`, j.id);
@@ -361,17 +369,16 @@ export function reduce(prev: AppState, action: Action, now = Date.now(), nonce?:
         if (!(qty >= 1 && qty <= 9999)) fail('Each material needs a quantity of at least 1.');
         if (l.key.startsWith('custom:')) {
           if (!l.name.trim()) fail('Give each extra material a name.');
-          if (!(l.unitPrice > 0)) fail(`Add a price for ${l.name.trim()}.`);
-          return { key: customKey(l.name), name: l.name.trim(), unit: l.unit.trim() || 'item', unitPrice: Math.round(l.unitPrice), qty, ...(l.spec?.trim() ? { spec: l.spec.trim().slice(0, 120) } : {}) };
+          return { key: customKey(l.name), name: l.name.trim(), unit: l.unit.trim() || 'item', unitPrice: 0, qty, ...(l.spec?.trim() ? { spec: l.spec.trim().slice(0, 120) } : {}) };
         }
         const item = catalogItem(j.category, l.key) || fail('One of the materials is not on the list for this job type.');
-        return { key: item.key, name: item.name, unit: item.unit, unitPrice: item.price, qty, ...(l.spec?.trim() ? { spec: l.spec.trim().slice(0, 120) } : {}) };
+        return { key: item.key, name: item.name, unit: item.unit, unitPrice: 0, qty, ...(l.spec?.trim() ? { spec: l.spec.trim().slice(0, 120) } : {}) };
       });
       if (!(b.serviceFee > 0)) fail('Set your service fee.');
       if (!j.preferredDays.includes(b.day)) fail('Pick one of the days the client chose.');
       if (b.day < today) fail('That day has passed. Pick another.');
       j.bids.push({ id: id('b'), artisanId: a.id, lines, serviceFee: Math.round(b.serviceFee), day: b.day, message: b.message.trim(), status: 'pending', at: now });
-      alert(j.clientId, `${a.name} sent a quotation of ${formatNaira(linesTotal(lines) + b.serviceFee)} for “${j.title}”.`, j.id);
+      alert(j.clientId, `${a.name} sent a quotation for “${j.title}”: ${formatNaira(b.serviceFee)} workmanship${lines.length ? ` and ${lines.length} material${lines.length > 1 ? 's' : ''} for market vendors to price` : ''}.`, j.id);
       break;
     }
     case 'acceptBid': {
@@ -384,7 +391,7 @@ export function reduce(prev: AppState, action: Action, now = Date.now(), nonce?:
       const charge = bidCharge(j, b);
       if (charge.due > 0) debit(c.id, charge.due, `Paid into Allyfe · ${j.title}`, 'hold');
       if (charge.due < 0) credit(c.id, -charge.due, `Difference returned · ${j.title}`);
-      j.escrow = charge.total;
+      j.escrow += charge.due;
       j.serviceFee = b.serviceFee;
       j.artisanId = b.artisanId;
       j.acceptedBidId = b.id;
@@ -396,19 +403,21 @@ export function reduce(prev: AppState, action: Action, now = Date.now(), nonce?:
           alert(x.artisanId, `${c.name} chose another artisan for “${j.title}”.`, j.id);
         }
       });
-      log(j, `Accepted ${name(b.artisanId)}'s bid · ${formatNaira(charge.total)} held by Allyfe`, c.name);
+      log(j, `Accepted ${name(b.artisanId)}'s quotation · ${formatNaira(b.serviceFee)} workmanship${charge.payNow ? ' · paid into Allyfe' : ' · materials to be priced by market vendors'}`, c.name);
       if (charge.billable.length) {
         const supplyId = id('s');
         const rep = pickRep(j.city);
         j.supply = {
           id: supplyId, ref: 'SR-' + j.ref.replace(/^PH-/, ''), repId: rep?.id, offers: [], orders: [], status: 'sourcing', at: now,
-          lines: charge.billable.map((l, i) => ({ id: `${supplyId}-L${i + 1}`, key: l.key, name: l.name, unit: l.unit, spec: l.spec ?? '', qty: l.qty, budgetPrice: l.unitPrice, delivered: 0 })),
+          messages: [],
+          lines: charge.billable.map((l, i) => ({ id: `${supplyId}-L${i + 1}`, key: l.key, name: l.name, unit: l.unit, spec: l.spec ?? '', qty: l.qty, delivered: 0 })),
         };
         j.status = 'awarded';
         log(j, `Allyfe Supply request ${j.supply.ref} created: ${j.supply.lines.length} material line${j.supply.lines.length > 1 ? 's' : ''}${rep ? ` · coordinated by ${rep.name}` : ''}`, 'Allyfe Supply');
-        vendorsFor(j).forEach((v) => alert(v.id, `New supply request in ${j.city}: ${j.supply!.lines.length} items for “${j.title}”. Send an offer for all or some of them.`, j.id));
-        if (rep) alert(rep.id, `New supply request ${j.supply.ref} for “${j.title}” (${formatNaira(charge.materials)} budget). Vendors have been notified.`, j.id);
-        alert(b.artisanId, `${c.name} accepted your bid for “${j.title}”. Allyfe Supply is sourcing the materials; you start on ${b.day}.`, j.id);
+        vendorsFor(j).forEach((v) => alert(v.id, `New supply request in ${j.city}: ${j.supply!.lines.length} items for “${j.title}”. Add your unit prices for what you have in stock.`, j.id));
+        if (rep) alert(rep.id, `New supply request ${j.supply.ref} for “${j.title}”. Vendors have been asked to price ${j.supply.lines.length} items.`, j.id);
+        alert(c.id, `Market vendors are now pricing the materials for “${j.title}”. ${rep ? rep.name + ', your Allyfe representative,' : 'Your Allyfe representative'} will send you the best quotation to pay.`, j.id);
+        alert(b.artisanId, `${c.name} accepted your quotation for “${j.title}”. Allyfe Supply is sourcing the materials; you start on ${b.day}.`, j.id);
       } else {
         j.supply = undefined;
         j.status = 'ready';
@@ -463,32 +472,28 @@ export function reduce(prev: AppState, action: Action, now = Date.now(), nonce?:
       const r = repFor(j);
       expect(j, 'awarded', 'materials_on_the_way');
       const sp = supplyOf(j);
-      if (sp.plan) fail('A plan is already waiting for approval.');
+      if (sp.plan) fail('A quotation is already with the client.');
       const opt = compareOffers(sp).find((o) => o.kind === action.kind && (action.kind === 'combined' || o.vendorId === action.vendorId)) || fail('That option is no longer available. Refresh the comparison.');
-      const funds = supplyFunds(j);
-      const extra = Math.max(0, opt.total - funds);
+      const needsArtisan = opt.substitutions > 0;
       sp.plan = {
-        kind: opt.kind, allocations: opt.allocations, materials: opt.materials, delivery: opt.delivery, total: opt.total, extra,
-        substitutions: opt.substitutions, needsClient: extra > 0 || opt.substitutions > 0, recommendedAt: now,
+        kind: opt.kind, allocations: opt.allocations, materials: opt.materials, delivery: opt.delivery, total: opt.total, due: planDue(j, opt.total),
+        substitutions: opt.substitutions, needsArtisan, recommendedAt: now,
       };
       syncSupply(j);
       const who = opt.vendorIds.map(name).join(' + ');
-      log(j, `${r.name} recommended ${opt.kind === 'single' ? 'complete supply' : 'combined supply'} from ${who}: ${formatNaira(opt.total)}${opt.complete ? '' : ' (partial; the rest stays in sourcing)'}`, r.name);
-      alert(j.artisanId!, `Materials plan for “${j.title}”: ${who}, ${formatNaira(opt.total)}. Please confirm the materials are technically right.`, j.id);
+      log(j, `${r.name} picked ${opt.kind === 'single' ? 'one vendor' : 'a combination of vendors'} (${who}): materials ${formatNaira(opt.total)}${opt.complete ? '' : ' · partial, the rest stays in sourcing'}`, r.name);
+      if (needsArtisan) alert(j.artisanId!, `The materials for “${j.title}” include ${opt.substitutions} substitute${opt.substitutions > 1 ? 's' : ''}. Please confirm they are technically suitable.`, j.id);
+      else alert(j.clientId, `${r.name} sent the materials quotation for “${j.title}”. Pay ${formatNaira(sp.plan.due)} to start delivery.`, j.id);
       break;
     }
     case 'withdrawPlan': {
       const j = job(action.jobId);
       const r = repFor(j);
       const sp = supplyOf(j);
-      const plan = sp.plan || fail('There is no plan to withdraw.');
-      if (plan.clientOkAt && plan.extra > 0) {
-        credit(j.clientId, plan.extra, `Extra for materials returned · ${j.title}`);
-        j.escrow -= plan.extra;
-      }
+      if (!sp.plan) fail('There is no quotation to withdraw.');
       sp.plan = undefined;
       syncSupply(j);
-      log(j, 'Materials plan withdrawn', r.name);
+      log(j, 'Materials quotation withdrawn', r.name);
       break;
     }
     case 'artisanReviewSupply': {
@@ -496,65 +501,55 @@ export function reduce(prev: AppState, action: Action, now = Date.now(), nonce?:
       const a = assignedArtisan(j);
       const sp = supplyOf(j);
       const plan = sp.plan || fail('There is no materials plan to review.');
+      if (!plan.needsArtisan) fail('This plan has no substitutes to check.');
       if (plan.artisanOkAt) fail('You have already confirmed this plan.');
       if (!action.ok) {
         if (!action.note.trim()) fail('Tell the representative what is wrong with the materials.');
         sp.plan = undefined;
         syncSupply(j);
-        log(j, `Artisan rejected the materials plan: ${action.note.trim()}`, a.name);
-        alertRep(j, `${a.name} rejected the plan for ${sp.ref}: “${action.note.trim()}”. Please re-source.`);
+        log(j, `Artisan rejected the substitutes: ${action.note.trim()}`, a.name);
+        alertRep(j, `${a.name} rejected the substitutes for ${sp.ref}: “${action.note.trim()}”. Please re-source.`);
         break;
       }
       plan.artisanOkAt = now;
-      log(j, 'Artisan confirmed the materials are technically suitable', a.name);
-      if (plan.needsClient)
-        alert(j.clientId, `Please approve the materials plan for “${j.title}”${plan.extra > 0 ? `: it costs ${formatNaira(plan.extra)} more than budgeted` : ''}${plan.substitutions ? ` and includes ${plan.substitutions} substitution${plan.substitutions > 1 ? 's' : ''}` : ''}.`, j.id);
-      else alertRep(j, `${a.name} confirmed the plan for ${sp.ref}. Ready for you to authorize.`);
+      log(j, 'Artisan confirmed the substitutes are technically suitable', a.name);
+      alert(j.clientId, `The materials quotation for “${j.title}” is ready. Pay ${formatNaira(plan.due)} to start delivery.`, j.id);
+      alertRep(j, `${a.name} confirmed the substitutes for ${sp.ref}. The quotation is with the client.`);
       break;
     }
     case 'clientReviewSupply': {
       const j = job(action.jobId);
       const c = ownClient(j);
       const sp = supplyOf(j);
-      const plan = sp.plan || fail('There is no materials plan to approve.');
-      if (!plan.needsClient) fail('This plan does not need your approval.');
-      if (!plan.artisanOkAt) fail('The artisan has to confirm the materials first.');
-      if (plan.clientOkAt) fail('You have already approved this plan.');
+      const plan = sp.plan || fail('There is no materials quotation to approve.');
+      if (plan.needsArtisan && !plan.artisanOkAt) fail('The artisan has to confirm the substitutes first.');
       if (!action.ok) {
         sp.plan = undefined;
         syncSupply(j);
-        log(j, `Client declined the materials plan${action.note.trim() ? `: ${action.note.trim()}` : ''}`, c.name);
-        alertRep(j, `${c.name} declined the plan for ${sp.ref}${action.note.trim() ? `: “${action.note.trim()}”` : ''}. Please re-source.`);
+        log(j, `Client declined the materials quotation${action.note.trim() ? `: ${action.note.trim()}` : ''}`, c.name);
+        alertRep(j, `${c.name} declined the quotation for ${sp.ref}${action.note.trim() ? `: “${action.note.trim()}”` : ''}. Please look for another option.`);
         break;
       }
-      if (plan.extra > 0) {
-        debit(c.id, plan.extra, `Extra for materials · ${j.title}`, 'hold');
-        j.escrow += plan.extra;
-      }
-      plan.clientOkAt = now;
-      log(j, `Client approved the materials plan${plan.extra > 0 ? ` and paid ${formatNaira(plan.extra)} extra` : ''}`, c.name);
-      alertRep(j, `${c.name} approved the plan for ${sp.ref}. Ready for you to authorize.`);
-      break;
-    }
-    case 'authorizeSupply': {
-      const j = job(action.jobId);
-      const r = repFor(j);
-      const sp = supplyOf(j);
-      const plan = sp.plan || fail('There is no plan to authorize.');
-      if (!plan.artisanOkAt) fail('Waiting for the artisan to confirm the materials.');
-      if (plan.needsClient && !plan.clientOkAt) fail('Waiting for the client to approve the plan.');
-      // Re-check nothing is allocated twice and every offer still stands.
+      // Re-check nothing is allocated twice and every offer still stands, before taking money.
       const need = supplyNeed(sp);
       const usedFromOffer = new Map<string, number>();
       for (const al of plan.allocations) {
-        const offer = sp.offers.find((o) => o.id === al.offerId && o.status === 'active') || fail('An offer in this plan was withdrawn. Withdraw the plan and compare again.');
+        const offer = sp.offers.find((o) => o.id === al.offerId && o.status === 'active') || fail('A vendor withdrew their offer. Your representative will send a new quotation.');
         const it = offer.items.find((i) => i.lineId === al.lineId)!;
         const k = offer.id + '|' + al.lineId;
         usedFromOffer.set(k, (usedFromOffer.get(k) ?? 0) + al.qty);
         if ((usedFromOffer.get(k) ?? 0) > it.qty) fail('An allocation exceeds what the vendor offered.');
         need[al.lineId] -= al.qty;
-        if (need[al.lineId] < 0) fail('An item would be allocated twice. Withdraw the plan and compare again.');
+        if (need[al.lineId] < 0) fail('An item would be allocated twice. Your representative will send a new quotation.');
       }
+      const due = planDue(j, plan.total);
+      if (due > 0) {
+        debit(c.id, due, `Materials${j.escrow < (j.serviceFee ?? 0) ? ' and workmanship' : ''} paid into Allyfe · ${j.title}`, 'hold');
+        j.escrow += due;
+      }
+      plan.clientOkAt = now;
+      log(j, `Client approved the quotation and paid ${formatNaira(due)} into Allyfe`, c.name);
+      // Payment made: one purchase order per vendor goes out straight away.
       const byVendor = new Map<string, PurchaseOrder['lines']>();
       for (const al of plan.allocations) {
         const line = sp.lines.find((l) => l.id === al.lineId)!;
@@ -568,12 +563,13 @@ export function reduce(prev: AppState, action: Action, now = Date.now(), nonce?:
         sp.orders.push(order);
         // The offered stock now lives in the purchase order.
         withdrawVendorOffer(sp, vendorId);
-        alert(vendorId, `Purchase order ${order.ref} for “${j.title}”: ${formatNaira(lines.reduce((t, l) => t + l.qty * l.unitPrice, 0) + fee)}. Confirm your stock to reserve it.`, j.id);
+        alert(vendorId, `Purchase order ${order.ref}: ${formatNaira(lines.reduce((t, l) => t + l.qty * l.unitPrice, 0) + fee)}. Confirm your stock to reserve it.`, j.id);
       }
       sp.plan = undefined;
-      log(j, `${r.name} authorized the allocation · ${byVendor.size} purchase order${byVendor.size > 1 ? 's' : ''} issued`, r.name);
+      log(j, `${byVendor.size} purchase order${byVendor.size > 1 ? 's' : ''} issued by Allyfe Supply`, 'Allyfe Supply');
       syncSupply(j);
-      alert(j.clientId, `Materials for “${j.title}” have been ordered from ${[...byVendor.keys()].map(name).join(' and ')}.`, j.id);
+      alertRep(j, `${c.name} paid for ${sp.ref}. Purchase orders went to ${[...byVendor.keys()].map(name).join(' and ')}.`);
+      if (j.artisanId) alert(j.artisanId, `${c.name} paid for the materials for “${j.title}”. Delivery is being arranged.`, j.id);
       break;
     }
     case 'confirmPO': {
@@ -680,6 +676,47 @@ export function reduce(prev: AppState, action: Action, now = Date.now(), nonce?:
       log(j, `${v.name} collected the refused goods of ${o.ref}`, v.name);
       alert(j.clientId, `${v.name} has collected the materials you refused (${o.ref}).`, j.id);
       alertRep(j, `${v.name} collected the refused goods of ${o.ref}.`);
+      break;
+    }
+
+    case 'sendSupplyMessage': {
+      const j = job(action.jobId);
+      const sp = supplyOf(j);
+      const u = me();
+      const text = action.text.trim().slice(0, 500);
+      if (!text) fail('Type a message.');
+      let thread = action.thread;
+      if (u.role === 'client') {
+        ownClient(j);
+        thread = 'client';
+      } else if (u.role === 'vendor') {
+        const v = u;
+        if (!sp.orders.some((o) => o.vendorId === v.id) && !sp.offers.some((o) => o.vendorId === v.id) && !vendorServes(v, j)) fail('This request is not for your shop.');
+        thread = v.id;
+      } else if (u.role === 'rep') {
+        repFor(j);
+        if (thread !== 'client' && s.users[thread]?.role !== 'vendor') fail('Choose the client or a vendor to message.');
+      } else fail('Artisans talk to the client about the work. Materials go through the Allyfe representative.');
+      const repId = sp.repId || fail('No representative has picked up this request yet.');
+      sp.messages.push({ id: id('m'), thread, from: u.id, text, at: now });
+      const to = u.role === 'rep' ? (thread === 'client' ? j.clientId : thread) : repId;
+      alert(to, `${u.role === 'rep' ? `${u.name} (Allyfe representative)` : u.role === 'vendor' ? u.name : `${u.name} (client)`} · ${sp.ref}: “${text.length > 80 ? text.slice(0, 77) + '…' : text}”`, j.id);
+      break;
+    }
+    case 'rateRep': {
+      const j = job(action.jobId);
+      const c = ownClient(j);
+      const sp = supplyOf(j);
+      if (sp.status !== 'complete') fail('You can review your representative once all the materials have arrived.');
+      if (sp.repRating) fail('You have already reviewed your representative for this job.');
+      const repId = sp.repId || fail('No representative handled this job.');
+      const stars = Math.round(action.stars);
+      if (!(stars >= 1 && stars <= 5)) fail('Choose 1 to 5 stars.');
+      const r = s.users[repId] as Rep;
+      [r.rating, r.ratingCount] = addRating(r.rating ?? 0, r.ratingCount ?? 0, stars);
+      sp.repRating = { stars, text: action.text.trim().slice(0, 300), at: now };
+      log(j, `Client rated the representative ★ ${stars}`, c.name);
+      alert(r.id, `${c.name} rated how you handled ${sp.ref} ★ ${stars}${sp.repRating.text ? `: “${sp.repRating.text}”` : '.'}`, j.id);
       break;
     }
 
