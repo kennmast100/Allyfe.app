@@ -2,7 +2,7 @@ import type { AppState, Artisan, Category, Client, Job, Post, QuoteLine, Rep, Us
 import { MATERIALS, dayKey, earliestWorkDay } from './rules';
 import { reduce, type Action } from './actions';
 
-export const STATE_VERSION = 5;
+export const STATE_VERSION = 6;
 
 const H = 3600_000;
 const D = 24 * H;
