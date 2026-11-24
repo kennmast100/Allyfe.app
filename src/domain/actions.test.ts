@@ -190,7 +190,7 @@ describe('the full journey', () => {
     s = as(s, 'c-kenneth', { type: 'completeJob', jobId: job.id });
     // ₦20,000 service fee minus the 5% Allyfe fee on a Basic job.
     expect(s.wallets['a-ibrahim']).toBe(before + 19000);
-    expect(s.wallets['allyfe']).toBe(1000);
+    expect(s.wallets['allyfe'] - seedState(T0).wallets['allyfe']).toBe(1000);
     expect(J(s, job.id).escrow).toBe(0);
 
     s = as(s, 'c-kenneth', { type: 'rateJob', jobId: job.id, work: 5, attitude: 4, text: 'Neat' });
@@ -327,6 +327,26 @@ describe('Allyfe Supply demo data', () => {
     expect(J(s, 'j-v5').supply!.plan!.due).toBe(21200 - 17500);
     expect(J(s, 'j-v6').supply!.orders[0].vendorId).toBe('v-mile3');
     expect(new Set(J(s, 'j-v1').supply!.plan!.allocations.map((a) => a.vendorId))).toEqual(new Set(['v-mile3', 'v-oilmill']));
+  });
+});
+
+describe('sample projects', () => {
+  it('runs both Abuja samples through the whole workflow', () => {
+    const s = seedState(T0);
+    const s1 = J(s, 'j-s1');
+    expect(s1).toMatchObject({ status: 'completed', escrow: 0, rating: { stars: 5 } });
+    expect(s1.supply).toMatchObject({ status: 'complete', repId: 'r-halima', repRating: { stars: 5 } });
+    expect(s1.supply!.orders.map((o) => o.status)).toEqual(['received']);
+    const s2 = J(s, 'j-s2');
+    expect(s2).toMatchObject({ status: 'completed', escrow: 0, tier: 'Premium', rating: { stars: 4.5 } });
+    // Combined vendors, a substitute, a short confirmation, cracked cartons re-sourced, ₦200 left over and returned.
+    expect(s2.supply!.orders.map((o) => [o.vendorId, o.status])).toEqual([['v-deidei', 'received'], ['v-garki', 'received'], ['v-deidei', 'received']]);
+    expect(s2.supply!.refunded).toBe(200);
+    expect(s2.history.some((h) => /substitutes are technically suitable/.test(h.label))).toBe(true);
+    expect(s2.history.some((h) => /Supervisor approved/.test(h.label))).toBe(true);
+    expect(s.wallets['a-kunle'] - 120000).toBe(162000); // 180,000 less the 10% Premium fee
+    expect(s.wallets['c-tolu']).toBe(150000);
+    expect(s.wallets['c-ngozi']).toBe(500000);
   });
 });
 
@@ -534,7 +554,7 @@ describe('Allyfe fee', () => {
     const before = s.wallets['a-ibrahim'];
     s = as(s, 'c-kenneth', { type: 'completeJob', jobId: job.id });
     expect(s.wallets['a-ibrahim']).toBe(before + 27000);
-    expect(s.wallets['allyfe']).toBe(3000);
+    expect(s.wallets['allyfe'] - seedState(T0).wallets['allyfe']).toBe(3000);
     expect(s.wallets['c-kenneth']).toBe(400000 - 30000); // the client pays the quoted fee, nothing extra
   });
 });

@@ -17,7 +17,7 @@ export function TopBar() {
       <span className="topbar-r">
         <span className="loc">
           <Icon name="pin" size={15} className="orange" />
-          Port Harcourt
+          {user.city}
         </span>
         <button className="bell" onClick={() => go({ name: 'alerts' })} aria-label={unread ? `Alerts, ${unread} unread` : 'Alerts'}>
           <Icon name="bell" size={21} />

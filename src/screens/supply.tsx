@@ -939,7 +939,7 @@ function RepJobCard({ job: j }: { job: Job }) {
           {state.users[j.clientId].name} · {serviceName(j.category)} · start {dayLabel(j.scheduledDay!)}
         </div>
         <span className={'tag ' + tone}>{next}</span>
-        {unanswered > 0 && <span className="tag orange ml6">{unanswered} message{unanswered > 1 ? 's' : ''} to answer</span>}
+        {unanswered > 0 && !['complete', 'cancelled'].includes(sp.status) && <span className="tag orange ml6">{unanswered} message{unanswered > 1 ? 's' : ''} to answer</span>}
       </div>
       <Icon name="chev" size={14} />
     </button>

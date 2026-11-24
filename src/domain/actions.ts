@@ -333,7 +333,7 @@ export function reduce(prev: AppState, action: Action, now = Date.now(), nonce?:
       if (d.preferredDays.some((x) => x < earliest)) fail('Work can only be booked at least 24 hours after you post, so vendors can buy and deliver the materials.');
       if (!d.honest) fail('Tick the box to confirm your description is truthful.');
       const j: Job = {
-        id: id('j'), ref: 'PH-' + (4200 + s.seq), clientId: c.id, city: c.city, title: d.title.trim(), desc: d.desc.trim(), addr: d.addr.trim(), category: d.category, tier: d.tier,
+        id: id('j'), ref: CITY_CODE[c.city] + '-' + (4200 + s.seq), clientId: c.id, city: c.city, title: d.title.trim(), desc: d.desc.trim(), addr: d.addr.trim(), category: d.category, tier: d.tier,
         preferredDays: d.preferredDays.slice().sort(), media: d.media, status: 'open', bids: [], invitedArtisanId: d.invitedArtisanId,
         ...(d.specialisation && JOB_ROLES.find((r) => r.role === d.category)?.specialisations.includes(d.specialisation) ? { specialisation: d.specialisation } : {}),
         escrow: 0, deliveredMaterials: [], noShows: [], history: [], createdAt: now,
@@ -408,7 +408,7 @@ export function reduce(prev: AppState, action: Action, now = Date.now(), nonce?:
         const supplyId = id('s');
         const rep = pickRep(j.city);
         j.supply = {
-          id: supplyId, ref: 'SR-' + j.ref.replace(/^PH-/, ''), repId: rep?.id, offers: [], orders: [], status: 'sourcing', at: now,
+          id: supplyId, ref: 'SR-' + j.ref.replace(/^[A-Z]+-/, ''), repId: rep?.id, offers: [], orders: [], status: 'sourcing', at: now,
           messages: [],
           lines: charge.billable.map((l, i) => ({ id: `${supplyId}-L${i + 1}`, key: l.key, name: l.name, unit: l.unit, spec: l.spec ?? '', qty: l.qty, delivered: 0 })),
         };
@@ -982,6 +982,9 @@ export function reduce(prev: AppState, action: Action, now = Date.now(), nonce?:
 }
 
 /** Wallet that collects Allyfe's company fees. */
+/** Short city code at the start of job numbers, e.g. PH-4201, AB-4202. */
+const CITY_CODE: Record<City, string> = { 'Port Harcourt': 'PH', Lagos: 'LA', Abuja: 'AB', Aba: 'AA' };
+
 export const ALLYFE_ACCOUNT = 'allyfe';
 
 /** A vendor gets a materials request only if verified, in the same city, and selling that kind of material. */
