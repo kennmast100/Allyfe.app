@@ -34,7 +34,7 @@ describe('what each person can see', () => {
     expect(text(v)).not.toContain('UBA •••• 1414');
   });
 
-  it('a vendor never sees the client phone; the address only with a purchase order; they talk to the rep', () => {
+  it('a vendor never sees the client phone or address (Allyfe delivers); they talk to the rep', () => {
     const v = viewFor(s, 'v-oilmill');
     const open = v.jobs.find((j) => j.id === 'j-v1')!; // a new request Oil Mill could take
     expect(open.addr).toBe('');
@@ -46,7 +46,7 @@ describe('what each person can see', () => {
     expect(open.supply!.offers.length).toBe(1);
 
     const m = viewFor(s, 'v-mile3');
-    expect(m.jobs.find((j) => j.id === 'j-v2')!.addr).toBe('7 Ikwerre Road, D-Line');
+    expect(m.jobs.find((j) => j.id === 'j-v2')!.addr).toBe(''); // even with a purchase order
     expect(m.users['c-ada'].phone).toBe('');
     expect(m.users['c-kenneth'].phone).toBe('');
     expect(m.users['r-ifeoma'].phone).toBe('0803 000 1818');
@@ -105,7 +105,7 @@ describe('what each person can see', () => {
     expect(c.jobs.find((j) => j.id === 'j-v5')!.supply!.offers).toEqual([]); // no quotation yet
     expect(j6.supply!.plan?.due).toBe(170000);
     // Paying works from the client's own copy of the data, as it does on the phone.
-    const paid = reduce({ ...c, sessionUserId: 'c-kenneth' }, { type: 'clientReviewSupply', jobId: 'j-v6', ok: true, note: '' }, T0, 'pay');
+    const paid = reduce({ ...c, sessionUserId: 'c-kenneth' }, { type: 'clientReviewSupply', jobId: 'j-v6', ok: true, note: '', override: true }, T0, 'pay');
     expect(paid.jobs.find((j) => j.id === 'j-v6')!.supply!.orders).toHaveLength(1);
     // The client reaches the rep, not the vendors; and sees only their own conversation.
     expect(c.users['r-ifeoma'].phone).toBe('0803 000 1818');

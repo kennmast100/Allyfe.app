@@ -91,11 +91,10 @@ export function viewFor(state: AppState, userId: string | null): AppState {
       const myOffer = sp.offers.some((o) => o.vendorId === me.id && o.status === 'active');
       const canOffer = openForOffers(j) && vendorServes(me, j);
       if (myOrders.length || myOffer || canOffer) {
-        // Delivery details only once Allyfe has sent this vendor a purchase order.
-        const delivering = myOrders.some((o) => o.status !== 'cancelled' && o.status !== 'declined');
         jobs.push({
           ...j, desc: '', media: [], bids: [], history: [], escrow: 0, deliveredMaterials: [], serviceFee: undefined,
-          addr: delivering ? j.addr : '',
+          // Allyfe collects from the vendor and delivers, so vendors never get the client's address.
+          addr: '',
           // Other vendors' orders stay in (so quantities already ordered aren't shown as still needed) but without who, prices or delivery details.
           supply: {
             ...sp,
@@ -225,7 +224,8 @@ export function repQueue(state: AppState, repId: string) {
     const threads = new Map<string, string>();
     for (const m of sp.messages) threads.set(m.thread, m.from);
     const unanswered = [...threads.values()].some((from) => from !== sp.repId);
-    return unanswered || (!sp.plan && pending && sp.offers.some((o) => o.status === 'active'));
+    const toPickUp = sp.orders.some((o) => o.status === 'confirmed');
+    return unanswered || toPickUp || (!sp.plan && pending && sp.offers.some((o) => o.status === 'active'));
   };
   const active = all.filter((j) => !['complete', 'cancelled'].includes(j.supply!.status));
   return { all, active, action: active.filter(needsRep), done: all.filter((j) => j.supply!.status === 'complete') };

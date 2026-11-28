@@ -359,7 +359,7 @@ export function ArtisanJob({ job: j }: { job: Job }) {
           <button className="btn concern" onClick={() => confirm(`Mark this job not as described? You'll get ${formatNaira(half)} for the visit and the job ends.`) && dispatch({ type: 'flagMisdescribed', jobId: j.id })}>
             Job is not as described
           </button>
-          <p className="small">Not as described pays you {formatNaira(half)} (50% of your fee) for the visit.</p>
+          <p className="small">Not as described pays you {formatNaira(half)} (10% of your fee) for the visit.</p>
         </div>
       ) : (
         <div className="focus">
@@ -408,7 +408,7 @@ export function ArtisanJob({ job: j }: { job: Job }) {
       focus = (
         <div className="focus bad">
           <h4>Visit paid</h4>
-          <p>{formatNaira(half)} (50% of your fee) is in your wallet for the visit.</p>
+          <p>{formatNaira(half)} (10% of your fee) is in your wallet for the visit.</p>
         </div>
       );
       break;

@@ -34,7 +34,7 @@ export const platformFee = (serviceFee: number, tier: Tier) => Math.round(servic
 export const feePercent = (tier: Tier) => `${Math.round(PLATFORM_FEE_RATES[tier] * 100)}%`;
 
 /** Share of the service fee the client forfeits when an artisan finds the job misdescribed on arrival. */
-export const MISDESCRIBED_FORFEIT = 0.5;
+export const MISDESCRIBED_FORFEIT = 0.1;
 
 /** Pro tier only matches artisans at or above this rating. */
 export const PRO_MIN_RATING = 4.7;
@@ -326,7 +326,7 @@ export function completionSplit(job: Pick<Job, 'escrow' | 'tier'>): Split {
   return { serviceFee: job.escrow, platform, artisan: job.escrow - platform, rate: feePercent(job.tier) };
 }
 
-/** The 50% rule on the service fee: what goes to the artisan for the visit and what returns to the client. */
+/** The 10% rule on the service fee: what goes to the artisan for the visit and what returns to the client. */
 export function misdescribedSplit(serviceFee: number): { artisan: number; clientRefund: number } {
   const artisan = Math.round(serviceFee * MISDESCRIBED_FORFEIT);
   return { artisan, clientRefund: serviceFee - artisan };
@@ -490,10 +490,11 @@ export type SupplyOption = {
   substitutions: number;
 };
 
-const finish = (kind: SupplyOption['kind'], allocations: Allocation[], offers: SupplyOffer[], need: Record<string, number>, vendorId?: string): SupplyOption => {
+const finish = (kind: SupplyOption['kind'], allocations: Allocation[], _offers: SupplyOffer[], need: Record<string, number>, vendorId?: string): SupplyOption => {
   const vendorIds = [...new Set(allocations.map((a) => a.vendorId))];
   const materials = allocations.reduce((s, a) => s + a.qty * a.unitPrice, 0);
-  const delivery = vendorIds.reduce((s, v) => s + (offers.find((o) => o.vendorId === v && o.status === 'active')?.deliveryFee ?? 0), 0);
+  // Vendors don't deliver: the representative adds Allyfe's delivery fee when sending the quotation.
+  const delivery = 0;
   const got: Record<string, number> = {};
   for (const a of allocations) got[a.lineId] = (got[a.lineId] ?? 0) + a.qty;
   const uncovered = Object.entries(need).filter(([id, q]) => q > (got[id] ?? 0)).map(([lineId, q]) => ({ lineId, qty: q - (got[lineId] ?? 0) }));
@@ -554,7 +555,7 @@ export function supplyFunds(job: Pick<Job, 'escrow' | 'serviceFee' | 'supply'>):
   const committed = (job.supply?.orders ?? [])
     .filter((o) => ['issued', 'confirmed', 'dispatched'].includes(o.status))
     .reduce((s, o) => s + o.lines.reduce((t, l) => t + (o.status === 'issued' ? l.qty : (l.confirmed ?? l.qty)) * l.unitPrice, 0) + o.deliveryFee, 0);
-  return job.escrow - (job.serviceFee ?? 0) - committed;
+  return job.escrow - (job.serviceFee ?? 0) - committed - (job.supply?.deliveryHeld ?? 0);
 }
 
 export const poTotal = (o: Pick<PurchaseOrder, 'lines' | 'deliveryFee' | 'status'>) =>

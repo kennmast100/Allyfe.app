@@ -70,7 +70,8 @@ function delivered() {
   s = offerAll(s, job.id, 'v-oilmill');
   s = approveAndOrder(s, job.id, 'single', 'v-oilmill');
   const po = J(s, job.id).supply!.orders[0];
-  s = as(s, 'v-oilmill', { type: 'confirmPO', jobId: job.id, poId: po.id, confirmed: {} }, { type: 'dispatchPO', jobId: job.id, poId: po.id, waybill: 'Rider Musa, 0803 555 0101' });
+  s = as(s, 'v-oilmill', { type: 'confirmPO', jobId: job.id, poId: po.id, confirmed: {} });
+    s = as(s, 'r-ifeoma', { type: 'dispatchPO', jobId: job.id, poId: po.id, waybill: 'Rider Musa, 0803 555 0101' }); // Allyfe picks it up
   s = as(s, 'c-kenneth', { type: 'receivePO', jobId: job.id, poId: po.id, received: {} });
   return { s, job };
 }
@@ -101,8 +102,9 @@ describe('rules', () => {
     expect(billable).toEqual([line('a', 1), line('b', 1)]);
     expect(covered).toEqual([line('a', 2)]);
   });
-  it('splits the service fee 50/50 when a job is misdescribed', () => {
-    expect(misdescribedSplit(20001)).toEqual({ artisan: 10001, clientRefund: 10000 });
+  it('gives the artisan 10% of the service fee when a job is misdescribed, and refunds 90%', () => {
+    expect(misdescribedSplit(20000)).toEqual({ artisan: 2000, clientRefund: 18000 });
+    expect(misdescribedSplit(20001)).toEqual({ artisan: 2000, clientRefund: 18001 });
   });
 });
 
@@ -166,13 +168,14 @@ describe('the full journey', () => {
     s = as(s, 'r-ifeoma', { type: 'recommendPlan', jobId: job.id, kind: 'single', vendorId: 'v-oilmill' });
     // The rep sends one total: ₦28,100 materials + ₦20,000 workmanship.
     expect(J(s, job.id).supply!.plan).toMatchObject({ total: 28100, due: 48100, needsArtisan: false });
-    expect(s.alerts['c-kenneth'][0].text).toMatch(/Pay ₦48,100/);
+    expect(s.alerts['c-kenneth'][0].text).toMatch(/pay ₦48,100/i);
     s = as(s, 'c-kenneth', { type: 'clientReviewSupply', jobId: job.id, ok: true, note: '' });
     expect(s.wallets['c-kenneth']).toBe(400000 - 48100);
     expect(J(s, job.id).escrow).toBe(48100);
     const po = J(s, job.id).supply!.orders[0];
     expect(po).toMatchObject({ vendorId: 'v-oilmill', status: 'issued' });
-    s = as(s, 'v-oilmill', { type: 'confirmPO', jobId: job.id, poId: po.id, confirmed: {} }, { type: 'dispatchPO', jobId: job.id, poId: po.id, waybill: 'Rider Musa' });
+    s = as(s, 'v-oilmill', { type: 'confirmPO', jobId: job.id, poId: po.id, confirmed: {} });
+    s = as(s, 'r-ifeoma', { type: 'dispatchPO', jobId: job.id, poId: po.id, waybill: 'Rider Musa' }); // Allyfe picks it up
     expect(J(s, job.id).status).toBe('materials_on_the_way');
     s = as(s, 'c-kenneth', { type: 'receivePO', jobId: job.id, poId: po.id, received: {} });
     expect(s.wallets['v-oilmill']).toBe(28100);
@@ -221,12 +224,13 @@ describe('the full journey', () => {
     expect(s.jobs[0].status).toBe('completed');
   });
 
-  it('applies the 50% rule to the service fee; the materials stay with the client', () => {
+  it('applies the 10% rule to the service fee; the materials stay with the client', () => {
     let { s, job } = delivered();
     const before = s.wallets['c-kenneth'];
     s = as(s, 'a-ibrahim', { type: 'flagMisdescribed', jobId: job.id });
     expect(s.jobs[0].status).toBe('not_as_described');
-    expect(s.wallets['c-kenneth']).toBe(before + 10000);
+    expect(s.wallets['c-kenneth']).toBe(before + 18000);
+    expect(s.wallets['a-ibrahim'] - seedState(T0).wallets['a-ibrahim']).toBe(2000);
   });
 });
 
@@ -309,7 +313,7 @@ describe('Allyfe Supply demo data', () => {
     expect(st('j-v4')).toEqual(['ready', 'complete']);
     expect(J(s, 'j-v5').supply!.orders[0]).toMatchObject({ vendorId: 'v-mile3', status: 'refused' });
     expect(J(s, 'j-v6').supply!.plan).toMatchObject({ total: 125000, due: 125000 + 45000, substitutions: 1, needsArtisan: true });
-    expect(J(s, 'j-v6').supply!.plan!.artisanOkAt).toBeDefined();
+    expect(J(s, 'j-v6').supply!.plan!.artisanOkAt).toBeUndefined(); // Kenneth can approve the substitute himself
     expect(J(s, 'j-v4').escrow).toBe(J(s, 'j-v4').serviceFee); // only the service fee is left
     expect(s.wallets['c-kenneth']).toBe(400000);
     expect(s.wallets['c-ada']).toBe(300000);
@@ -320,11 +324,11 @@ describe('Allyfe Supply demo data', () => {
     let s = seedState(T0);
     const po2 = J(s, 'j-v2').supply!.orders[0];
     s = as(s, 'v-mile3', { type: 'confirmPO', jobId: 'j-v2', poId: po2.id, confirmed: {} }, { type: 'collectRefusedPO', jobId: 'j-v5', poId: J(s, 'j-v5').supply!.orders[0].id });
-    s = as(s, 'c-kenneth', { type: 'receivePO', jobId: 'j-v3', poId: J(s, 'j-v3').supply!.orders[0].id, received: {} }, { type: 'clientReviewSupply', jobId: 'j-v6', ok: true, note: '' });
+    s = as(s, 'c-kenneth', { type: 'receivePO', jobId: 'j-v3', poId: J(s, 'j-v3').supply!.orders[0].id, received: {} }, { type: 'clientReviewSupply', jobId: 'j-v6', ok: true, note: '', override: true });
     expect(J(s, 'j-v3').status).toBe('ready');
     s = as(s, 'r-ifeoma', { type: 'recommendPlan', jobId: 'j-v5', kind: 'single', vendorId: 'v-oilmill' }, { type: 'recommendPlan', jobId: 'j-v1', kind: 'combined' });
     // Kenneth already paid for the refused fittings, so the new Oil Mill quotation needs only the difference.
-    expect(J(s, 'j-v5').supply!.plan!.due).toBe(21200 - 17500);
+    expect(J(s, 'j-v5').supply!.plan!.due).toBe(19200 - 17500);
     expect(J(s, 'j-v6').supply!.orders[0].vendorId).toBe('v-mile3');
     expect(new Set(J(s, 'j-v1').supply!.plan!.allocations.map((a) => a.vendorId))).toEqual(new Set(['v-mile3', 'v-oilmill']));
   });
@@ -360,9 +364,9 @@ describe('Allyfe Supply rules', () => {
     const opts = compareOffers(J(s, job.id).supply!);
     const single = opts.find((o) => o.kind === 'single')!;
     const combined = opts.find((o) => o.kind === 'combined')!;
-    expect(single).toMatchObject({ vendorId: 'v-oilmill', total: 28100 + 1000, complete: true });
+    expect(single).toMatchObject({ vendorId: 'v-oilmill', total: 28100, complete: true });
     // Shower and 1 PTFE from Mile 3; the second PTFE and the sealant from Oil Mill.
-    expect(combined.total).toBe(22000 + 250 + 300 + 2500 + 500 + 1000);
+    expect(combined.total).toBe(22000 + 250 + 300 + 2500); // vendors charge no delivery; Allyfe adds its own fee
     expect(combined.complete).toBe(true);
     const ptfe = combined.allocations.filter((a) => a.lineId === lineOf(J(s, job.id), 'pl-ptfe').id);
     expect(ptfe.map((a) => [a.vendorId, a.qty])).toEqual([['v-mile3', 1], ['v-oilmill', 1]]);
@@ -421,14 +425,14 @@ describe('Allyfe Supply rules', () => {
       ],
     });
     s = as(s, 'r-ifeoma', { type: 'recommendPlan', jobId: job.id, kind: 'single', vendorId: 'v-oilmill' });
-    // 27,000 + 600 + 2,500 + 2,000 delivery = 32,100 materials, plus 20,000 workmanship.
-    expect(J(s, job.id).supply!.plan).toMatchObject({ total: 32100, due: 52100, substitutions: 1, needsArtisan: true });
-    expect(s.alerts['a-ibrahim'][0].text).toMatch(/substitute/);
+    // 27,000 + 600 + 2,500 = 30,100 materials (the vendor's delivery fee is ignored), plus 20,000 workmanship.
+    expect(J(s, job.id).supply!.plan).toMatchObject({ total: 30100, due: 50100, substitutions: 1, needsArtisan: true });
+    expect(s.alerts['a-ibrahim'][0].text).toMatch(/Substitute in the vendor list/);
     expect(() => as(s, 'c-kenneth', { type: 'clientReviewSupply', jobId: job.id, ok: true, note: '' })).toThrow(/artisan has to confirm/);
     s = as(s, 'a-ibrahim', { type: 'artisanReviewSupply', jobId: job.id, ok: true, note: '' });
     const before = s.wallets['c-kenneth'];
     s = as(s, 'c-kenneth', { type: 'clientReviewSupply', jobId: job.id, ok: true, note: '' });
-    expect(s.wallets['c-kenneth']).toBe(before - 52100);
+    expect(s.wallets['c-kenneth']).toBe(before - 50100);
     expect(J(s, job.id).supply!.orders[0].lines[0]).toMatchObject({ substitute: 'Shower mixer, Grohe', unitPrice: 27000 });
   });
 
@@ -476,7 +480,8 @@ describe('Allyfe Supply rules', () => {
     s = approveAndOrder(s, job.id, 'single', 'v-oilmill');
     const po = J(s, job.id).supply!.orders[0];
     const ptfe = lineOf(J(s, job.id), 'pl-ptfe').id;
-    s = as(s, 'v-oilmill', { type: 'confirmPO', jobId: job.id, poId: po.id, confirmed: {} }, { type: 'dispatchPO', jobId: job.id, poId: po.id, waybill: 'GIG 1' });
+    s = as(s, 'v-oilmill', { type: 'confirmPO', jobId: job.id, poId: po.id, confirmed: {} });
+    s = as(s, 'r-ifeoma', { type: 'dispatchPO', jobId: job.id, poId: po.id, waybill: 'GIG 1' }); // Allyfe picks it up
     s = as(s, 'c-kenneth', { type: 'receivePO', jobId: job.id, poId: po.id, received: { [ptfe]: 1 } });
     expect(s.wallets['v-oilmill']).toBe(28100 - 300);
     expect(supplyNeed(J(s, job.id).supply!)[ptfe]).toBe(1);
@@ -490,14 +495,16 @@ describe('Allyfe Supply rules', () => {
     const po = J(s, job.id).supply!.orders[0];
     const ptfe = lineOf(J(s, job.id), 'pl-ptfe').id;
     // Oil Mill only has 1 PTFE roll after all; Mile 3 supplies the other one cheaper.
-    s = as(s, 'v-oilmill', { type: 'confirmPO', jobId: job.id, poId: po.id, confirmed: { [ptfe]: 1 } }, { type: 'dispatchPO', jobId: job.id, poId: po.id, waybill: 'GIG 2' });
+    s = as(s, 'v-oilmill', { type: 'confirmPO', jobId: job.id, poId: po.id, confirmed: { [ptfe]: 1 } });
+    s = as(s, 'r-ifeoma', { type: 'dispatchPO', jobId: job.id, poId: po.id, waybill: 'GIG 2' }); // Allyfe picks it up
     s = as(s, 'c-kenneth', { type: 'receivePO', jobId: job.id, poId: po.id, received: {} });
     s = offerAll(s, job.id, 'v-mile3', { 'pl-ptfe': 200 });
     s = as(s, 'r-ifeoma', { type: 'recommendPlan', jobId: job.id, kind: 'single', vendorId: 'v-mile3' });
     expect(J(s, job.id).supply!.plan!.due).toBe(0); // already paid for
     s = as(s, 'c-kenneth', { type: 'clientReviewSupply', jobId: job.id, ok: true, note: '' });
     const po2 = J(s, job.id).supply!.orders[1];
-    s = as(s, 'v-mile3', { type: 'confirmPO', jobId: job.id, poId: po2.id, confirmed: {} }, { type: 'dispatchPO', jobId: job.id, poId: po2.id, waybill: 'Rider' });
+    s = as(s, 'v-mile3', { type: 'confirmPO', jobId: job.id, poId: po2.id, confirmed: {} });
+    s = as(s, 'r-ifeoma', { type: 'dispatchPO', jobId: job.id, poId: po2.id, waybill: 'Rider' }); // Allyfe picks it up
     const before = s.wallets['c-kenneth'];
     s = as(s, 'c-kenneth', { type: 'receivePO', jobId: job.id, poId: po2.id, received: {} });
     expect(s.wallets['c-kenneth']).toBe(before + 100);
@@ -509,7 +516,7 @@ describe('Allyfe Supply rules', () => {
   it('keeps an auditable record of every step', () => {
     const { s, job } = delivered();
     const log = J(s, job.id).history.map((h) => h.label).join('\n');
-    for (const step of [/Supply request SR-/, /offered the full list/, /picked one vendor/, /Client approved the quotation and paid ₦48,100/, /1 purchase order issued/, /confirmed PO-.*stock reserved/, /dispatched/, /Client received PO-/, /All materials delivered and reconciled/])
+    for (const step of [/Supply request SR-/, /offered the full list/, /picked one vendor/, /Client approved the quotation and paid ₦48,100/, /1 purchase order issued/, /confirmed PO-.*stock reserved/, /picked up from Oil Mill/, /Client received PO-/, /All materials delivered and reconciled/])
       expect(log).toMatch(step);
   });
 
@@ -559,6 +566,45 @@ describe('Allyfe fee', () => {
   });
 });
 
+describe('delivery by Allyfe', () => {
+  it('lets the rep add the delivery fee; the client pays it with the quotation; Allyfe gets it when everything arrives', () => {
+    let { s, job } = awarded();
+    s = offerAll(s, job.id, 'v-oilmill', {}, 5000); // a vendor's own delivery fee is ignored
+    expect(J(s, job.id).supply!.offers[0].deliveryFee).toBe(0);
+    s = as(s, 'r-ifeoma', { type: 'recommendPlan', jobId: job.id, kind: 'single', vendorId: 'v-oilmill', deliveryFee: 3000 });
+    expect(J(s, job.id).supply!.plan).toMatchObject({ materials: 28100, delivery: 3000, total: 31100, due: 51100 });
+    s = as(s, 'c-kenneth', { type: 'clientReviewSupply', jobId: job.id, ok: true, note: '' });
+    const po = J(s, job.id).supply!.orders[0];
+    s = as(s, 'v-oilmill', { type: 'confirmPO', jobId: job.id, poId: po.id, confirmed: {} });
+    expect(() => as(s, 'v-oilmill', { type: 'dispatchPO', jobId: job.id, poId: po.id, waybill: 'My van' })).toThrow(/Only reps/);
+    expect(() => as(s, 'r-ifeoma', { type: 'dispatchPO', jobId: job.id, poId: po.id, waybill: ' ' })).toThrow(/delivery details/);
+    s = as(s, 'r-ifeoma', { type: 'dispatchPO', jobId: job.id, poId: po.id, waybill: 'Allyfe rider Musa' });
+    expect(s.alerts['v-oilmill'][0].text).toMatch(/Allyfe is collecting/);
+    expect(s.alerts['c-kenneth'][0].text).toMatch(/on the way.*Allyfe rider Musa/);
+    const allyfe = s.wallets['allyfe'];
+    s = as(s, 'c-kenneth', { type: 'receivePO', jobId: job.id, poId: po.id, received: {} });
+    expect(s.wallets['v-oilmill']).toBe(28100); // goods only
+    expect(s.wallets['allyfe'] - allyfe).toBe(3000);
+    expect(J(s, job.id).escrow).toBe(20000);
+  });
+
+  it('lets the client approve a substitute without waiting for the artisan, and tells the artisan', () => {
+    let { s, job } = awarded();
+    const j = J(s, job.id);
+    s = as(s, 'v-oilmill', {
+      type: 'submitOffer', jobId: job.id, deliveryDays: 1, note: '',
+      items: [{ lineId: lineOf(j, 'pl-shower').id, qty: 1, unitPrice: 24000, substitute: 'Shower mixer, Grohe' }, { lineId: lineOf(j, 'pl-ptfe').id, qty: 2, unitPrice: 300 }, { lineId: lineOf(j, 'custom:silicone sealant').id, qty: 1, unitPrice: 2500 }],
+    });
+    s = as(s, 'r-ifeoma', { type: 'recommendPlan', jobId: job.id, kind: 'single', vendorId: 'v-oilmill' });
+    expect(s.alerts['a-ibrahim'][0].text).toMatch(/Substitute in the vendor list.*Shower mixer, Grohe instead of Shower mixer set/);
+    expect(() => as(s, 'c-kenneth', { type: 'clientReviewSupply', jobId: job.id, ok: true, note: '' })).toThrow(/approve them yourself/);
+    s = as(s, 'c-kenneth', { type: 'clientReviewSupply', jobId: job.id, ok: true, note: '', override: true });
+    expect(J(s, job.id).supply!.orders).toHaveLength(1);
+    expect(J(s, job.id).history.some((h) => /without waiting for the artisan/.test(h.label))).toBe(true);
+    expect(s.alerts['a-ibrahim'].some((a) => /approved the substitute .* without waiting/.test(a.text))).toBe(true);
+  });
+});
+
 describe('communication through the representative', () => {
   it('carries client ↔ rep and vendor ↔ rep messages, never client ↔ vendor', () => {
     let { s, job } = awarded();
@@ -592,12 +638,13 @@ describe('communication through the representative', () => {
 });
 
 describe('refusing materials', () => {
-  it('does not pay the vendor, tells them to collect, and re-sources the items', () => {
+  it('does not pay the vendor, returns the goods to them, and re-sources the items', () => {
     let { s, job } = awarded();
     s = offerAll(s, job.id, 'v-oilmill');
     s = approveAndOrder(s, job.id, 'single', 'v-oilmill');
     const po = J(s, job.id).supply!.orders[0];
-    s = as(s, 'v-oilmill', { type: 'confirmPO', jobId: job.id, poId: po.id, confirmed: {} }, { type: 'dispatchPO', jobId: job.id, poId: po.id, waybill: 'Rider Musa' });
+    s = as(s, 'v-oilmill', { type: 'confirmPO', jobId: job.id, poId: po.id, confirmed: {} });
+    s = as(s, 'r-ifeoma', { type: 'dispatchPO', jobId: job.id, poId: po.id, waybill: 'Rider Musa' }); // Allyfe picks it up
     expect(() => as(s, 'c-kenneth', { type: 'refusePO', jobId: job.id, poId: po.id, reason: 'Made up', note: '' })).toThrow(/reason/);
     expect(() => as(s, 'c-kenneth', { type: 'refusePO', jobId: job.id, poId: po.id, reason: 'Other', note: '' })).toThrow(/what is wrong/);
     s = as(s, 'c-kenneth', { type: 'refusePO', jobId: job.id, poId: po.id, reason: 'Poor quality or substandard', note: 'Tap is plastic, not chrome' });
@@ -605,7 +652,7 @@ describe('refusing materials', () => {
     expect(J(s, job.id).status).toBe('awarded');
     expect(J(s, job.id).supply!.status).toBe('sourcing');
     expect(J(s, job.id).escrow).toBe(48100); // still held for the materials and fee
-    expect(s.alerts['v-oilmill'].some((a) => /did NOT accept .* collect the goods/.test(a.text))).toBe(true);
+    expect(s.alerts['v-oilmill'].some((a) => /did NOT accept .* Allyfe's rider will return them/.test(a.text))).toBe(true);
     s = as(s, 'v-oilmill', { type: 'collectRefusedPO', jobId: job.id, poId: po.id });
     expect(J(s, job.id).supply!.orders[0].refusal!.pickedUpAt).toBeDefined();
     expect(() => as(s, 'v-oilmill', { type: 'collectRefusedPO', jobId: job.id, poId: po.id })).toThrow(/Already/);
@@ -614,7 +661,8 @@ describe('refusing materials', () => {
     s = offerAll(s, job.id, 'v-mile3');
     s = approveAndOrder(s, job.id, 'single', 'v-mile3');
     const po2 = J(s, job.id).supply!.orders[1];
-    s = as(s, 'v-mile3', { type: 'confirmPO', jobId: job.id, poId: po2.id, confirmed: {} }, { type: 'dispatchPO', jobId: job.id, poId: po2.id, waybill: 'GIG 4471' });
+    s = as(s, 'v-mile3', { type: 'confirmPO', jobId: job.id, poId: po2.id, confirmed: {} });
+    s = as(s, 'r-ifeoma', { type: 'dispatchPO', jobId: job.id, poId: po2.id, waybill: 'GIG 4471' }); // Allyfe picks it up
     s = as(s, 'c-kenneth', { type: 'receivePO', jobId: job.id, poId: po2.id, received: {} });
     expect(s.wallets['v-mile3']).toBe(mile3Before + 28100);
     expect(J(s, job.id).status).toBe('ready');

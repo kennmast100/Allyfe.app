@@ -459,29 +459,32 @@ export function Terms() {
       <div className="terms">
         <h4>1. Posting a job</h4>
         <p>Describe the job truthfully and in detail, with clear photos. Blurry photos are not accepted. Videos can be at most 20 seconds. Work can be booked no sooner than 24 hours after posting, so a vendor has time to buy and deliver materials.</p>
-        <h4>2. Quotations and payment</h4>
-        <p>Artisans quote materials and a service fee. When you accept a quotation you pay the full amount into Allyfe, which holds it. Nobody is paid at that point.</p>
-        <h4>3. Materials</h4>
-        <p>The materials list goes to verified market vendors in your city. Only the vendor who accepts your order sees your phone number, so they can confirm delivery and the exact materials (brand, colour, texture) with you. The vendor is paid when you tap “I’ve received the materials”. Check every item before you confirm.</p>
+        <h4>2. Quotations</h4>
+        <p>Artisans quote the materials (quantity and specification) and their workmanship fee. They do not price materials. Accepting a quotation costs nothing when materials have to be bought.</p>
+        <h4>3. Materials and payment</h4>
+        <p>The materials list goes to verified market vendors in your city, who add today’s prices for what they have in stock. Your Allyfe representative picks the best vendor (or a combination) and sends you one total: materials, delivery and workmanship. You pay that into Allyfe, which holds it. Nobody is paid at that point.</p>
+        <p>If a vendor offers a substitute for an item, the artisan is notified and can confirm it is suitable. You may also approve the substitute yourself without waiting for the artisan; you then accept responsibility for that choice.</p>
+        <h4>4. Delivery and communication</h4>
+        <p>You deal only with your Allyfe representative, never with vendors directly. Vendors confirm and reserve the stock; the representative arranges pickup and delivery to your address. Each vendor is paid only for the items you confirm you received. Check every item before you confirm.</p>
         <h4>Refusing materials</h4>
-        <p>If the materials are wrong, damaged, short, substandard or not what was quoted, tap “I’m not happy with the materials” and choose a reason. The vendor is not paid for that delivery and, <b>under the Allyfe vendor contract, must come back and collect the goods</b> at their own cost. The order then goes back out so the right materials can be delivered.</p>
-        <h4>4. The work</h4>
+        <p>If the materials are wrong, damaged, short, substandard or not what was quoted, refuse the delivery and choose a reason. The vendor is not paid for it and, <b>under the Allyfe vendor contract, must take the goods back</b>. Your representative then sources the right materials; the money you already paid covers them.</p>
+        <h4>5. The work</h4>
         <p>The artisan taps “Work started” on the agreed day and “Work finished” when done. The artisan is paid only when you tap “Job done”. Premium jobs are inspected by an Allyfe supervisor first.</p>
         <h4>Allyfe fee</h4>
-        <p>Allyfe keeps a company fee from the artisan’s service fee when a job is done: <b>5% on Basic and Pro jobs, 10% on Premium jobs</b>. Clients pay the quoted price and nothing extra. Materials carry no fee.</p>
-        <h4>5. Not as described</h4>
-        <p>If the artisan arrives and the job is not what you described, they may mark it “Not as described”. You then forfeit 50% of the service fee for their visit; the other 50% is refunded. Materials already delivered stay with you.</p>
-        <h4>6. If the artisan doesn’t show up</h4>
+        <p>Allyfe keeps a company fee from the artisan’s workmanship fee when a job is done: <b>5% on Basic and Pro jobs, 10% on Premium jobs</b>. This is between Allyfe and the artisan; clients pay the quoted price and nothing extra. Materials carry no fee.</p>
+        <h4>6. Not as described</h4>
+        <p>If the artisan arrives and the job is not what you described, they may mark it “Not as described”. You then forfeit 10% of the service fee for their visit; the other 90% is refunded. Materials already delivered stay with you.</p>
+        <h4>7. If the artisan doesn’t show up</h4>
         <p>From the scheduled day you can report a no-show. The artisan receives a 1★ rating for that job, which counts in their average. You then choose:</p>
         <ul>
           <li><b>Refund:</b> everything Allyfe still holds is returned to your wallet. <b>Money for materials already delivered is not refunded</b>; the materials stay with you.</li>
           <li><b>Another artisan:</b> new artisans bid. Materials already at your home are taken off the new quotation, and the money still held counts toward it. You pay any extra or get the difference back.</li>
         </ul>
-        <h4>7. Cancelling before delivery</h4>
-        <p>If no materials have been delivered yet, you can cancel and get a full refund.</p>
-        <h4>8. Ratings</h4>
-        <p>After the job you answer two questions: how well the work was done, and the artisan’s attitude. Each answer is scored 1 to 5; the job’s rating is the average of the two.</p>
-        <h4>9. Location</h4>
+        <h4>8. Cancelling before delivery</h4>
+        <p>If no materials have been delivered yet, you can cancel and get a full refund of anything you have paid.</p>
+        <h4>9. Ratings</h4>
+        <p>After the job you answer two questions: how well the work was done, and the artisan’s attitude. Each answer is scored 1 to 5; the job’s rating is the average of the two. You also rate how smoothly your Allyfe representative handled the materials; this counts toward their appraisal.</p>
+        <h4>10. Location</h4>
         <p>Jobs are only sent to artisans and vendors in the same city as the client.</p>
       </div>
     </>

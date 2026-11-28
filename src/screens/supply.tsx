@@ -14,9 +14,9 @@ import { useApp } from '../store/store';
 
 const PO_LABEL: Record<PurchaseOrder['status'], string> = {
   issued: 'Waiting for vendor to confirm stock',
-  confirmed: 'Stock reserved · being prepared',
+  confirmed: 'Stock reserved · awaiting Allyfe pickup',
   declined: 'Declined by vendor',
-  dispatched: 'On the way',
+  dispatched: 'Picked up · on the way',
   received: 'Received and paid',
   refused: 'Refused by client',
   cancelled: 'Cancelled',
@@ -113,7 +113,7 @@ function PlanSummary({ supply, job, viewer }: { supply: Supply; job: Job; viewer
           );
         })}
         <div className="q-row sub">
-          <span>Delivery to site</span>
+          <span>Delivery to site (by Allyfe)</span>
           <b>{formatNaira(p.delivery)}</b>
         </div>
         <div className="q-row tot">
@@ -176,8 +176,8 @@ export function MessageThread({ job, thread, title, hint }: { job: Job; thread: 
       </div>
       <div className="msg-in">
         <input type="text" aria-label={`Message: ${title}`} placeholder="Type a message…" value={text} onChange={(e) => setText(e.target.value)} maxLength={500} />
-        <button className="btn primary sm" disabled={!text.trim()} onClick={() => dispatch({ type: 'sendSupplyMessage', jobId: job.id, thread, text }) && setText('')}>
-          Send
+        <button className="btn primary send-btn" disabled={!text.trim()} aria-label="Send message" onClick={() => dispatch({ type: 'sendSupplyMessage', jobId: job.id, thread, text }) && setText('')}>
+          <Icon name="arrow" size={18} /> Send
         </button>
       </div>
     </div>
@@ -202,30 +202,49 @@ function OrderCard({ job, order, viewer, label }: { job: Job; order: PurchaseOrd
               {l.name}
               <small>
                 {l.qty} ordered{l.confirmed != null ? ` · ${l.confirmed} confirmed` : ''}
-                {l.received != null ? ` · ${l.received} received` : ''} · {formatNaira(l.unitPrice)} each
+                {l.received != null ? ` · ${l.received} received` : ''}
+                {viewer !== 'artisan' ? ` · ${formatNaira(l.unitPrice)} each` : ''}
               </small>
             </span>
-            <b>{formatNaira((l.received ?? l.confirmed ?? l.qty) * l.unitPrice)}</b>
+            {viewer !== 'artisan' && <b>{formatNaira((l.received ?? l.confirmed ?? l.qty) * l.unitPrice)}</b>}
           </div>
         ))}
-        <div className="q-row sub">
-          <span>Delivery</span>
-          <b>{formatNaira(order.deliveryFee)}</b>
-        </div>
-        <div className="q-row tot">
-          <span>{order.paid != null ? 'Paid to vendor' : 'Order total'}</span>
-          <b>{formatNaira(order.paid ?? poTotal(order))}</b>
-        </div>
+        {viewer !== 'artisan' && (
+          <div className="q-row tot">
+            <span>{order.paid != null ? 'Paid to vendor' : 'Order total'}</span>
+            <b>{formatNaira(order.paid ?? poTotal(order))}</b>
+          </div>
+        )}
       </div>
-      {order.waybill && <div className="small mt6">Waybill: {order.waybill}</div>}
+      {order.waybill && <div className="small mt6">Delivery: {order.waybill}</div>}
+      {viewer === 'rep' && order.status === 'confirmed' && <RepDispatch job={job} order={order} />}
       {order.refusal && (
         <div className="small reject-line">
           ✕ Refused: {order.refusal.reason}
-          {order.refusal.note ? ` (“${order.refusal.note}”)` : ''} · {order.refusal.pickedUpAt ? 'collected by vendor' : 'vendor must collect'}
+          {order.refusal.note ? ` (“${order.refusal.note}”)` : ''} · {order.refusal.pickedUpAt ? 'returned to vendor' : 'being returned to vendor'}
         </div>
       )}
       {viewer === 'client' && order.status === 'dispatched' && <ReceiveOrder job={job} order={order} />}
       {viewer === 'vendor' && <VendorOrderActions job={job} order={order} />}
+    </div>
+  );
+}
+
+/* ---------------- representative: arrange pickup and delivery ---------------- */
+function RepDispatch({ job, order }: { job: Job; order: PurchaseOrder }) {
+  const { state, dispatch } = useApp();
+  const [details, setDetails] = useState('');
+  const v = state.users[order.vendorId] as Vendor | undefined;
+  return (
+    <div className="card inset mt10">
+      <b className="t13">Arrange pickup and delivery</b>
+      <p className="small m0">
+        Stock is reserved at {v?.name} ({v?.market}). Send a rider or vehicle, then add the delivery details: the client and the vendor are told.
+      </p>
+      <input type="text" aria-label="Delivery details" placeholder="e.g. Allyfe rider Musa · 0803 555 0101 · arriving 2pm" value={details} onChange={(e) => setDetails(e.target.value)} />
+      <button className="btn primary" onClick={() => dispatch({ type: 'dispatchPO', jobId: job.id, poId: order.id, waybill: details }, 'Picked up. The client has been told it is on the way.') && setDetails('')}>
+        Picked up · on the way to the client
+      </button>
     </div>
   );
 }
@@ -278,7 +297,7 @@ function ReceiveOrder({ job, order }: { job: Job; order: PurchaseOrder }) {
   return (
     <div className="card reject-box mt10">
       <b className="t14">Refuse this delivery</b>
-      <p className="small m0">The vendor is not paid and must come back to collect the goods (vendor contract). The items go back to Allyfe Supply to be sourced again.</p>
+      <p className="small m0">The vendor is not paid and takes the goods back (vendor contract); Allyfe returns them. Your representative sources the right items; the money you paid covers them.</p>
       <label className="f" htmlFor={'rr-' + order.id}>
         What's wrong?
       </label>
@@ -310,7 +329,9 @@ export function SupplyPanel({ job, viewer }: { job: Job; viewer: 'client' | 'art
   const rep = sp.repId ? (state.users[sp.repId] as Rep | undefined) : undefined;
   const p = sp.plan;
   const artisanTurn = viewer === 'artisan' && p && p.needsArtisan && !p.artisanOkAt;
-  const clientTurn = viewer === 'client' && p && (!p.needsArtisan || p.artisanOkAt) && !p.clientOkAt;
+  const clientTurn = viewer === 'client' && p && !p.clientOkAt;
+  const waitingArtisan = !!p && p.needsArtisan && !p.artisanOkAt;
+  const artisanName = job.artisanId ? first(state.users[job.artisanId]?.name ?? 'the artisan') : 'the artisan';
   const live = sp.orders.filter((o) => o.status !== 'cancelled');
   const wallet = state.wallets[job.clientId] ?? 0;
   return (
@@ -371,10 +392,16 @@ export function SupplyPanel({ job, viewer }: { job: Job; viewer: 'client' | 'art
               <h4>Pay to start delivery</h4>
               <p>
                 {rep ? first(rep.name) : 'Your representative'} picked the best price from the market.
-                {p.substitutions > 0 && (
+                {p.substitutions > 0 && !waitingArtisan && (
                   <>
                     {' '}
-                    It includes <b>{p.substitutions} substitute{p.substitutions > 1 ? 's' : ''}</b>, which the artisan has confirmed are suitable.
+                    It includes <b>{p.substitutions} substitute{p.substitutions > 1 ? 's' : ''}</b>, which {artisanName} has confirmed {p.substitutions > 1 ? 'are' : 'is'} suitable.
+                  </>
+                )}
+                {waitingArtisan && (
+                  <>
+                    {' '}
+                    It includes <b>{p.substitutions} substitute{p.substitutions > 1 ? 's' : ''}</b>. {artisanName} has been asked to check {p.substitutions > 1 ? 'them' : 'it'}. To save time you can approve {p.substitutions > 1 ? 'them' : 'it'} yourself and pay now.
                   </>
                 )}{' '}
                 Allyfe holds the money and pays each vendor only when you confirm their delivery.
@@ -385,8 +412,13 @@ export function SupplyPanel({ job, viewer }: { job: Job; viewer: 'client' | 'art
                   Top up {formatNaira(Math.ceil((p.due - wallet) / 10000) * 10000)}
                 </button>
               ) : (
-                <button className="btn primary" onClick={() => dispatch({ type: 'clientReviewSupply', jobId: job.id, ok: true, note: '' }, p.due > 0 ? `${formatNaira(p.due)} paid into Allyfe. The vendors have been told to deliver.` : 'Approved.')}>
-                  {p.due > 0 ? `Pay ${formatNaira(p.due)}` : 'Approve'}
+                <button
+                  className="btn primary"
+                  onClick={() =>
+                    dispatch({ type: 'clientReviewSupply', jobId: job.id, ok: true, note: '', override: waitingArtisan }, p.due > 0 ? `${formatNaira(p.due)} paid into Allyfe. The vendors are reserving your materials.` : 'Approved.')
+                  }
+                >
+                  {waitingArtisan ? (p.due > 0 ? `Approve substitute myself and pay ${formatNaira(p.due)}` : 'Approve substitute myself') : p.due > 0 ? `Pay ${formatNaira(p.due)}` : 'Approve'}
                 </button>
               )}
               <button className="btn secondary" onClick={() => dispatch({ type: 'clientReviewSupply', jobId: job.id, ok: false, note: '' }, 'Declined. Your representative will look for another option.')}>
@@ -395,7 +427,7 @@ export function SupplyPanel({ job, viewer }: { job: Job; viewer: 'client' | 'art
             </div>
           )}
           {!artisanTurn && !clientTurn && (
-            <p className="small mt6">{p.needsArtisan && !p.artisanOkAt ? 'Waiting for the artisan to check the substitute.' : 'Waiting for the client to pay.'}</p>
+            <p className="small mt6">{waitingArtisan ? 'Waiting for the artisan to check the substitute (the client may approve it directly).' : 'Waiting for the client to pay.'}</p>
           )}
         </>
       )}
@@ -514,7 +546,7 @@ export function VendorHome() {
           [
             ['Requests', `${q.requests.length} to offer`, '#F97316', 'requests', 'new'],
             ['To confirm', `${q.toConfirm.length} orders`, '#DC2626', 'check', 'mine'],
-            ['To send', `${q.toSend.length} orders`, '#7C6CF0', 'jobs', 'mine'],
+            ['For pickup', `${q.toSend.length} orders`, '#7C6CF0', 'jobs', 'mine'],
             ['Earnings', formatNaira(state.wallets[v.id] ?? 0), '#F59E0B', 'wallet', ''],
           ] as const
         ).map(([t, s, c, ic, tab]) => (
@@ -532,10 +564,10 @@ export function VendorHome() {
       </Notice>
       {q.toCollect.length > 0 && (
         <>
-          <h3>To collect ({q.toCollect.length})</h3>
+          <h3>Refused goods coming back ({q.toCollect.length})</h3>
           <div className="list">
             {q.toCollect.map((j) => (
-              <VendorJobCard key={j.id} job={j} label="Refused · collect the goods" tone="bad" />
+              <VendorJobCard key={j.id} job={j} label="Refused · goods coming back" tone="bad" />
             ))}
           </div>
         </>
@@ -582,10 +614,10 @@ export function Orders({ tab = 'new' }: { tab?: 'new' | 'mine' }) {
   const q = vendorQueue(state, user!.id);
   const [t, setT] = useState(tab);
   const mine: [Job, string, string][] = [
-    ...q.toCollect.map((j) => [j, 'Refused · collect the goods', 'bad'] as [Job, string, string]),
+    ...q.toCollect.map((j) => [j, 'Refused · goods coming back', 'bad'] as [Job, string, string]),
     ...q.toConfirm.map((j) => [j, 'Confirm your stock', 'warn'] as [Job, string, string]),
-    ...q.toSend.map((j) => [j, 'Stock reserved · send it', 'blue'] as [Job, string, string]),
-    ...q.awaiting.map((j) => [j, 'Sent · waiting for client', 'blue'] as [Job, string, string]),
+    ...q.toSend.map((j) => [j, 'Stock reserved · awaiting Allyfe pickup', 'blue'] as [Job, string, string]),
+    ...q.awaiting.map((j) => [j, 'Picked up · with the client', 'blue'] as [Job, string, string]),
     ...q.done.map((j) => [j, 'Delivered and paid', 'good'] as [Job, string, string]),
   ];
   return (
@@ -639,7 +671,6 @@ export function OrderDetail({ jobId }: { jobId: string }) {
   const need = supplyNeed(sp);
   const myOffer = sp.offers.find((o) => o.vendorId === v.id && o.status === 'active');
   const myOrders = sp.orders.filter((o) => o.vendorId === v.id);
-  const delivering = myOrders.some((o) => !['cancelled', 'declined'].includes(o.status));
   const client = state.users[j.clientId];
   const rep = sp.repId ? state.users[sp.repId] : undefined;
   const canOffer = Object.values(need).some((n) => n > 0) && vendorServes(v, j) && !sp.plan?.allocations.some((a) => a.vendorId === v.id);
@@ -652,14 +683,8 @@ export function OrderDetail({ jobId }: { jobId: string }) {
       </p>
       <div className="card">
         <dl className="summary m0">
-          <dt>Deliver to</dt>
-          <dd>{delivering ? fullAddress(j) : `${client.area} (full address with a purchase order)`}</dd>
-          {delivering && (
-            <>
-              <dt>Receiver</dt>
-              <dd>{first(client.name)} (client) · contact through the representative</dd>
-            </>
-          )}
+          <dt>Pickup</dt>
+          <dd>Allyfe collects from your shop and delivers to the client ({client.area}).</dd>
           {rep && (
             <>
               <dt>Your contact at Allyfe</dt>
@@ -685,7 +710,7 @@ export function OrderDetail({ jobId }: { jobId: string }) {
       {canOffer && <OfferForm key={myOffer?.id ?? 'new'} job={j} existing={myOffer} />}
       {!canOffer && !myOffer && !myOrders.length && <Notice>This request is fully sourced.</Notice>}
       {!myOrders.length && !canOffer && myOffer && <p className="small mt8">Your offer is in a plan waiting for approval.</p>}
-      <p className="small mt10">🔒 You deal only with the Allyfe representative, never the client directly. The delivery address appears once Allyfe sends you a purchase order.</p>
+      <p className="small mt10">🔒 You deal only with the Allyfe representative, never the client directly. Allyfe picks up the stock you confirm and delivers it.</p>
       {canOffer && myOffer && (
         <button className="btn secondary mt8" onClick={() => dispatch({ type: 'withdrawOffer', jobId: j.id }, 'Offer withdrawn.')}>
           Withdraw my offer
@@ -698,7 +723,7 @@ export function OrderDetail({ jobId }: { jobId: string }) {
 
 function MyOffer({ job, offer }: { job: Job; offer: SupplyOffer }) {
   const sp = job.supply!;
-  const total = offer.items.reduce((s, i) => s + i.qty * i.unitPrice, 0) + offer.deliveryFee;
+  const total = offer.items.reduce((s, i) => s + i.qty * i.unitPrice, 0);
   return (
     <>
       <h3>Your offer</h3>
@@ -719,8 +744,8 @@ function MyOffer({ job, offer }: { job: Job; offer: SupplyOffer }) {
             );
           })}
           <div className="q-row sub">
-            <span>Delivery ({offer.deliveryDays === 0 ? 'same day' : `${offer.deliveryDays} day${offer.deliveryDays > 1 ? 's' : ''}`})</span>
-            <b>{formatNaira(offer.deliveryFee)}</b>
+            <span>Ready for Allyfe pickup</span>
+            <span>{offer.deliveryDays === 0 ? 'same day' : `within ${offer.deliveryDays} day${offer.deliveryDays > 1 ? 's' : ''}`}</span>
           </div>
           <div className="q-row tot">
             <span>{offer.items.length === sp.lines.length ? 'Full offer' : `Partial offer · ${offer.items.length} of ${sp.lines.length} items`}</span>
@@ -746,15 +771,39 @@ function OfferForm({ job, existing }: { job: Job; existing?: SupplyOffer }) {
       }),
     ),
   );
-  const [fee, setFee] = useState(existing ? String(existing.deliveryFee) : '');
   const [days, setDays] = useState(existing ? String(existing.deliveryDays) : '1');
   const [note, setNote] = useState(existing?.note ?? '');
+  const fullExisting = !!existing && open.every((l) => existing.items.some((i) => i.lineId === l.id && i.qty === need[l.id]));
+  const [mode, setMode] = useState<'all' | 'part' | null>(existing ? (fullExisting ? 'all' : 'part') : null);
   const num = (x: string) => Number(x.replace(/\D/g, '')) || 0;
-  const total = open.reduce((s, l) => (rows[l.id].on ? s + num(rows[l.id].qty) * num(rows[l.id].price) : s), 0) + num(fee);
+  const total = open.reduce((s, l) => (rows[l.id].on ? s + num(rows[l.id].qty) * num(rows[l.id].price) : s), 0);
+  const pick = (m: 'all' | 'part') => {
+    setMode(m);
+    // "I have everything": every item, full quantities. "Part": start from everything and untick or lower.
+    if (m === 'all') setRows(Object.fromEntries(open.map((l) => [l.id, { ...rows[l.id], on: true, qty: String(need[l.id]) }])));
+  };
   return (
     <>
       <h3>{existing ? 'Update your offer' : 'Send your offer'}</h3>
-      <p className="small m0 mb8">Prices change, so the artisan's list has no prices: add today's unit price for each item you have in stock and the app works out the amount. Untick what you don't have, or lower the quantity to what's in store. Can't match the spec? Offer a substitute; the artisan must approve it.</p>
+      <p className="small m0 mb8">Do you have everything on this list in stock?</p>
+      <div className="supply-choice" role="radiogroup" aria-label="How much can you supply?">
+        <button role="radio" aria-checked={mode === 'all'} className={'card' + (mode === 'all' ? ' on' : '')} onClick={() => pick('all')}>
+          <b className="t14">I have all the materials</b>
+          <span className="small">Every item, full quantity</span>
+        </button>
+        <button role="radio" aria-checked={mode === 'part'} className={'card' + (mode === 'part' ? ' on' : '')} onClick={() => pick('part')}>
+          <b className="t14">I can supply part</b>
+          <span className="small">Some items or smaller quantities</span>
+        </button>
+      </div>
+      {mode && (
+        <p className="small m0 mb8 mt10">
+          Prices change, so the artisan's list has no prices: add today's unit price for each item and the app works out the amount.
+          {mode === 'part' ? " Untick what you don't have, or lower the quantity to what's in store." : ''} Can't match the spec? Offer a substitute; the artisan is notified.
+        </p>
+      )}
+      {mode && (
+      <>
       <div className="list">
         {open.map((l) => {
           const r = rows[l.id];
@@ -762,7 +811,7 @@ function OfferForm({ job, existing }: { job: Job; existing?: SupplyOffer }) {
           return (
             <div className={'card offer-line' + (r.on ? ' on' : '')} key={l.id}>
               <label className="check m0">
-                <input type="checkbox" checked={r.on} onChange={(e) => set({ on: e.target.checked })} />
+                <input type="checkbox" checked={r.on} disabled={mode === 'all'} onChange={(e) => set({ on: e.target.checked })} />
                 <span>
                   <b className="ink">{l.name}</b> · {need[l.id]} {l.unit}
                   {need[l.id] > 1 ? 's' : ''} needed
@@ -774,7 +823,7 @@ function OfferForm({ job, existing }: { job: Job; existing?: SupplyOffer }) {
                   <div className="price-row mt8">
                     <div>
                       <span className="small">Qty in stock</span>
-                      <input type="text" inputMode="numeric" aria-label={`Quantity of ${l.name}`} value={r.qty} onChange={(e) => set({ qty: e.target.value })} />
+                      <input type="text" inputMode="numeric" aria-label={`Quantity of ${l.name}`} value={r.qty} readOnly={mode === 'all'} onChange={(e) => set({ qty: e.target.value })} />
                     </div>
                     <div>
                       <span className="small">Unit price (₦)</span>
@@ -798,24 +847,15 @@ function OfferForm({ job, existing }: { job: Job; existing?: SupplyOffer }) {
           );
         })}
       </div>
-      <div className="row mt10">
-        <div>
-          <label className="f" htmlFor="ofee">
-            Delivery fee (₦)
-          </label>
-          <input id="ofee" type="text" inputMode="numeric" placeholder="0 if free" value={fee} onChange={(e) => setFee(e.target.value)} />
-        </div>
-        <div>
-          <label className="f" htmlFor="odays">
-            Delivery within (days)
-          </label>
-          <input id="odays" type="text" inputMode="numeric" value={days} onChange={(e) => setDays(e.target.value)} />
-        </div>
-      </div>
+      <label className="f" htmlFor="odays">
+        Ready for Allyfe pickup within (days)
+      </label>
+      <input id="odays" type="text" inputMode="numeric" value={days} onChange={(e) => setDays(e.target.value)} />
+      <p className="small mt6">You don't deliver: Allyfe's representative arranges pickup from your shop and delivery to the client.</p>
       <label className="f" htmlFor="onote">
         Note for the representative <em>(optional)</em>
       </label>
-      <textarea id="onote" placeholder="Brand, stock condition, delivery time…" value={note} onChange={(e) => setNote(e.target.value)} maxLength={300} />
+      <textarea id="onote" placeholder="Brand, stock condition, when it can be picked up…" value={note} onChange={(e) => setNote(e.target.value)} maxLength={300} />
       <button
         className="btn primary mt12"
         onClick={() =>
@@ -823,7 +863,6 @@ function OfferForm({ job, existing }: { job: Job; existing?: SupplyOffer }) {
             {
               type: 'submitOffer',
               jobId: job.id,
-              deliveryFee: num(fee),
               deliveryDays: num(days),
               note,
               items: open.filter((l) => rows[l.id].on).map((l) => ({ lineId: l.id, qty: num(rows[l.id].qty), unitPrice: num(rows[l.id].price), ...(rows[l.id].subOn && rows[l.id].sub.trim() ? { substitute: rows[l.id].sub } : {}) })),
@@ -834,6 +873,8 @@ function OfferForm({ job, existing }: { job: Job; existing?: SupplyOffer }) {
       >
         {existing ? 'Update offer' : 'Send offer'} · {formatNaira(total)}
       </button>
+      </>
+      )}
     </>
   );
 }
@@ -841,7 +882,6 @@ function OfferForm({ job, existing }: { job: Job; existing?: SupplyOffer }) {
 function VendorOrderActions({ job, order }: { job: Job; order: PurchaseOrder }) {
   const { dispatch } = useApp();
   const [conf, setConf] = useState<Record<string, string>>(() => Object.fromEntries(order.lines.map((l) => [l.lineId, String(l.qty)])));
-  const [waybill, setWaybill] = useState('');
   const [declining, setDeclining] = useState(false);
   const [note, setNote] = useState('');
   if (order.status === 'issued')
@@ -877,25 +917,21 @@ function VendorOrderActions({ job, order }: { job: Job; order: PurchaseOrder }) 
   if (order.status === 'confirmed')
     return (
       <div className="card inset mt10">
-        <b className="t13">Send the materials</b>
-        <p className="small m0">Waybill them to the client and add the rider or waybill details.</p>
-        <input className="mt6" type="text" aria-label="Waybill details" placeholder="e.g. GIG waybill 4471 or rider Musa, 0803 555 0101" value={waybill} onChange={(e) => setWaybill(e.target.value)} />
-        <button className="btn primary mt8" onClick={() => dispatch({ type: 'dispatchPO', jobId: job.id, poId: order.id, waybill }, 'Marked as sent. The client has been notified.')}>
-          Mark as sent
-        </button>
+        <b className="t13">Stock reserved · Allyfe will pick it up</b>
+        <p className="small m0">You don't deliver. Keep the items packed; the Allyfe representative sends a rider and you'll get an alert with the pickup details.</p>
       </div>
     );
   if (order.status === 'refused' && !order.refusal?.pickedUpAt)
     return (
       <div className="card collect mt10">
-        <b className="t13">Collect the refused goods</b>
-        <div className="small">Under your Allyfe vendor contract, collect them from {fullAddress(job)}. This delivery is not paid.</div>
-        <button className="btn primary mt8" onClick={() => dispatch({ type: 'collectRefusedPO', jobId: job.id, poId: order.id }, 'Marked as collected.')}>
-          I've collected the goods
+        <b className="t13">Refused goods coming back</b>
+        <div className="small">Under your Allyfe vendor contract you take them back. Allyfe's rider is returning them to your shop. This delivery is not paid.</div>
+        <button className="btn primary mt8" onClick={() => dispatch({ type: 'collectRefusedPO', jobId: job.id, poId: order.id }, 'Thanks. Marked as returned.')}>
+          I've got the goods back
         </button>
       </div>
     );
-  if (order.status === 'dispatched') return <p className="small mt8">Waiting for the client to check and confirm. You're paid for what they accept.</p>;
+  if (order.status === 'dispatched') return <p className="small mt8">Picked up by Allyfe. You're paid for what the client accepts on delivery.</p>;
   return null;
 }
 
@@ -1067,6 +1103,8 @@ export function RepRequest({ job: j }: { job: Job }) {
   const artisan = j.artisanId ? state.users[j.artisanId] : undefined;
   const p = sp.plan;
   const held = Math.max(0, supplyFunds(j));
+  const [delivery, setDelivery] = useState('');
+  const deliveryFee = Number(delivery.replace(/\D/g, '')) || 0;
   const vendorThreads = [...new Set([...sp.offers.map((o) => o.vendorId), ...sp.orders.map((o) => o.vendorId), ...sp.messages.filter((m) => m.thread !== 'client').map((m) => m.thread)])];
   return (
     <>
@@ -1106,7 +1144,7 @@ export function RepRequest({ job: j }: { job: Job }) {
           <PlanSummary supply={sp} job={j} viewer="rep" />
           <p className="small mt6">
             {p.needsArtisan && !p.artisanOkAt
-              ? `Waiting for ${artisan?.name ?? 'the artisan'} to check the substitute.`
+              ? `Waiting for ${artisan?.name ?? 'the artisan'} to check the substitute, or for ${client.name} to approve it directly and pay.`
               : `Waiting for ${client.name} to pay. Purchase orders go to the vendors as soon as they do.`}
           </p>
           <button className="btn secondary mt8" onClick={() => dispatch({ type: 'withdrawPlan', jobId: j.id }, 'Quotation withdrawn.')}>
@@ -1128,6 +1166,13 @@ export function RepRequest({ job: j }: { job: Job }) {
             <>
               <h3>Pick the best vendor</h3>
               <p className="small m0 mb8">One vendor for everything is compared with the cheapest combination of vendors. Nothing is allocated twice. The client sees the total and pays; they never deal with the vendor.</p>
+              <div className="card inset mb8">
+                <label className="f mt0" htmlFor="rdel">
+                  Delivery fee (Allyfe pickup and delivery to site)
+                </label>
+                <input id="rdel" type="text" inputMode="numeric" placeholder="₦ 0 if free" value={delivery} onChange={(e) => setDelivery(e.target.value)} />
+                <span className="small">Covers collecting from every vendor in the option you pick and delivering to {fullAddress(j)}.</span>
+              </div>
               <div className="list">
                 {options.map((o, i) => (
                   <div className={'card option-card' + (i === 0 ? ' best' : '')} key={o.kind + (o.vendorId ?? '')}>
@@ -1141,21 +1186,21 @@ export function RepRequest({ job: j }: { job: Job }) {
                         <b>{formatNaira(o.materials)}</b>
                       </div>
                       <div>
-                        <span>Delivery ({o.vendorIds.length} vendor{o.vendorIds.length > 1 ? 's' : ''})</span>
-                        <b>{formatNaira(o.delivery)}</b>
+                        <span>Delivery by Allyfe ({o.vendorIds.length} pickup{o.vendorIds.length > 1 ? 's' : ''})</span>
+                        <b>{formatNaira(deliveryFee)}</b>
                       </div>
                       <div className="tot">
                         <span>Total</span>
-                        <span>{formatNaira(o.total)}</span>
+                        <span>{formatNaira(o.materials + deliveryFee)}</span>
                       </div>
                     </div>
                     <div className="small mt6">
-                      Client pays {formatNaira(planDue(j, o.total))}
+                      Client pays {formatNaira(planDue(j, o.materials + deliveryFee))}
                       {j.escrow < (j.serviceFee ?? 0) ? ' (with workmanship)' : ''}
                       {o.substitutions ? ` · ${o.substitutions} substitute${o.substitutions > 1 ? 's' : ''} for the artisan to check` : ''}
                       {!o.complete ? ` · partial: ${o.uncovered.length} item${o.uncovered.length > 1 ? 's' : ''} stay in sourcing` : ''}
                     </div>
-                    <button className="btn primary sm mt8" onClick={() => dispatch({ type: 'recommendPlan', jobId: j.id, kind: o.kind, vendorId: o.vendorId }, o.substitutions ? 'Sent to the artisan to check the substitute.' : 'Quotation sent to the client.')}>
+                    <button className="btn primary sm mt8" onClick={() => dispatch({ type: 'recommendPlan', jobId: j.id, kind: o.kind, vendorId: o.vendorId, deliveryFee }, o.substitutions ? 'Sent to the artisan to check the substitute.' : 'Quotation sent to the client.')}>
                       Send this quotation to the client
                     </button>
                   </div>
@@ -1216,7 +1261,7 @@ function OfferCard({ supply, offer }: { supply: Supply; offer: SupplyOffer }) {
   const { state, go } = useApp();
   const v = state.users[offer.vendorId] as Vendor;
   const rec = vendorRecord(state, v.id);
-  const total = offer.items.reduce((s, i) => s + i.qty * i.unitPrice, 0) + offer.deliveryFee;
+  const total = offer.items.reduce((s, i) => s + i.qty * i.unitPrice, 0);
   const full = offer.items.length === supply.lines.length;
   return (
     <div className="card">
@@ -1252,8 +1297,8 @@ function OfferCard({ supply, offer }: { supply: Supply; offer: SupplyOffer }) {
           );
         })}
         <div className="q-row sub">
-          <span>Delivery · {offer.deliveryDays === 0 ? 'same day' : `${offer.deliveryDays} day${offer.deliveryDays > 1 ? 's' : ''}`}</span>
-          <b>{formatNaira(offer.deliveryFee)}</b>
+          <span>Ready for pickup</span>
+          <span>{offer.deliveryDays === 0 ? 'same day' : `within ${offer.deliveryDays} day${offer.deliveryDays > 1 ? 's' : ''}`}</span>
         </div>
         <div className="q-row tot">
           <span>Offer total</span>

@@ -134,6 +134,8 @@ export type SupplyPlan = {
   artisanOkAt?: number;
   /** When the client approved and paid; purchase orders go out at the same moment. */
   clientOkAt?: number;
+  /** The client approved a substitute themselves instead of waiting for the artisan. */
+  clientOverrode?: boolean;
 };
 
 export type POLine = { lineId: string; name: string; unit: string; qty: number; unitPrice: number; substitute?: string; confirmed?: number; received?: number };
@@ -147,7 +149,7 @@ export type PurchaseOrder = {
   status: POStatus;
   waybill?: string;
   paid?: number;
-  /** Set when the client refuses the delivery; the vendor must collect the goods. */
+  /** Set when the client refuses the delivery; Allyfe returns the goods to the vendor, who confirms receipt. */
   refusal?: { reason: string; note: string; at: number; pickedUpAt?: number };
   at: number;
 };
@@ -165,6 +167,8 @@ export type Supply = {
   status: SupplyStatus;
   /** Savings returned to the client when every line is delivered. */
   refunded?: number;
+  /** Delivery the client has paid for: Allyfe's representative arranges pickup from vendors and delivery to site. */
+  deliveryHeld?: number;
   /** Two lines of communication: client ↔ representative ('client') and representative ↔ each vendor (thread = vendor id). Clients and vendors never message each other. */
   messages: SupplyMessage[];
   /** The client's review of how smoothly the representative handled the supply; used for the rep's appraisal. */

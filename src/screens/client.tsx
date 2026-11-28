@@ -429,7 +429,7 @@ export function PostJob({ artisanId, category }: { artisanId?: string; category?
                 For <b>{invited.name}</b>.{' '}
               </>
             )}
-            Be specific. Artisans price the materials and their fee from what you write here.
+            Be specific. Artisans list the materials and set their workmanship from what you write here; market vendors then price the materials.
           </p>
           <div className="chosen-cat">
             <CategoryIcon cat={d.category} /> <b>{d.category}</b>
@@ -458,7 +458,7 @@ export function PostJob({ artisanId, category }: { artisanId?: string; category?
           <textarea id="fdesc" className="tall" value={d.desc} onChange={(e) => set({ desc: e.target.value })} maxLength={1500} placeholder="Write the details here…" />
           <div className={'small tr ' + (descLen >= MIN_DESCRIPTION ? 'good-ink' : '')}>{descLen >= MIN_DESCRIPTION ? '✓ Good detail' : `${MIN_DESCRIPTION - descLen} more characters needed`}</div>
           <label className="f" htmlFor="faddr">
-            Address <em>(shared only with the artisan and vendor you accept)</em>
+            Address <em>(shared only with the artisan you accept and Allyfe's delivery team)</em>
           </label>
           <input id="faddr" type="text" value={d.addr} onChange={(e) => set({ addr: e.target.value })} />
           <label className="f">
@@ -529,7 +529,7 @@ export function PostJob({ artisanId, category }: { artisanId?: string; category?
             </ol>
           </div>
           <Notice>
-            <b>Describe the job honestly.</b> If the artisan arrives and the work is not what you described, they can mark it <b>Not as described</b>. You would lose <b>50% of the service fee</b> to pay for their visit. The materials stay with you.
+            <b>Describe the job honestly.</b> If the artisan arrives and the work is not what you described, they can mark it <b>Not as described</b>. You would lose <b>10% of the service fee</b> to pay for their visit. The materials stay with you.
           </Notice>
           <label className="check">
             <input type="checkbox" checked={d.honest} onChange={(e) => set({ honest: e.target.checked })} />
@@ -732,21 +732,58 @@ export function JobHeader({ job: j, artisanView }: { job: Job; artisanView?: boo
   );
 }
 
+/** Full-screen view of a job's photos and videos, with next/previous when there are several. */
+function Lightbox({ media, start, onClose }: { media: string[]; start: number; onClose: () => void }) {
+  const [i, setI] = useState(start);
+  const many = media.length > 1;
+  return (
+    <div className="lightbox" role="dialog" aria-modal="true" aria-label={`Photo ${i + 1} of ${media.length}`} onClick={onClose}>
+      <button className="lb-close" aria-label="Close" onClick={onClose}>
+        ✕
+      </button>
+      <div className="lb-pic" onClick={(e) => e.stopPropagation()}>
+        <Picture src={media[i]} alt={`Job photo ${i + 1}`} />
+      </div>
+      {many && (
+        <div className="lb-nav" onClick={(e) => e.stopPropagation()}>
+          <button aria-label="Previous photo" onClick={() => setI((i + media.length - 1) % media.length)}>
+            ‹
+          </button>
+          <span>
+            {i + 1} / {media.length}
+          </span>
+          <button aria-label="Next photo" onClick={() => setI((i + 1) % media.length)}>
+            ›
+          </button>
+        </div>
+      )}
+    </div>
+  );
+}
+
 export function JobDetails({ job: j, hideAddress }: { job: Job; hideAddress?: boolean }) {
+  const [open, setOpen] = useState<number | null>(null);
   return (
     <>
       <h3>Job details</h3>
       <div className="card">
         <p className="t13 m0 pre">{j.desc}</p>
         {j.media.length > 0 && (
-          <div className="grid3 mt10">
-            {j.media.map((p, i) => (
-              <div className="sq" key={i}>
-                <Picture src={p} />
-              </div>
-            ))}
-          </div>
+          <>
+            <div className="grid3 mt10">
+              {j.media.map((p, i) => (
+                <button className="sq zoomable" key={i} onClick={() => setOpen(i)} aria-label={`Open photo ${i + 1} full screen`}>
+                  <Picture src={p} />
+                  <span className="zoom-ic" aria-hidden="true">
+                    ⤢
+                  </span>
+                </button>
+              ))}
+            </div>
+            <div className="small mt6">Tap a photo to see it full screen.</div>
+          </>
         )}
+        {open != null && <Lightbox media={j.media} start={open} onClose={() => setOpen(null)} />}
         <dl className="summary">
           <dt>{j.scheduledDay ? 'Scheduled' : "Client's days"}</dt>
           <dd>{j.scheduledDay ? dayLabel(j.scheduledDay) : j.preferredDays.map(dayLabel).join(', ')}</dd>
@@ -846,7 +883,7 @@ export function ClientJob({ job: j }: { job: Job }) {
           <h4>
             {j.status === 'materials_on_the_way'
               ? 'Materials are on the way'
-              : j.supply?.plan && !j.supply.plan.clientOkAt && (!j.supply.plan.needsArtisan || j.supply.plan.artisanOkAt)
+              : j.supply?.plan && !j.supply.plan.clientOkAt
                 ? 'Your materials quotation is ready'
                 : j.supply?.orders.some((o) => ['issued', 'confirmed'].includes(o.status))
                   ? 'Paid · vendors are preparing your materials'
@@ -906,8 +943,13 @@ export function ClientJob({ job: j }: { job: Job }) {
       focus = (
         <div className="focus warn">
           <h4>{af} says the work is finished</h4>
-          <p>Check the work{j.tier === 'Premium' ? ' (the supervisor has approved it)' : ''}. When you tap Job done, Allyfe pays:</p>
-          <SplitBox split={completionSplit(j)} job={j} />
+          <p>Check the work{j.tier === 'Premium' ? ' (the supervisor has approved it)' : ''}. When you tap Job done, Allyfe releases the workmanship to {af}:</p>
+          <div className="card money sand">
+            <div className="tot">
+              <span>Workmanship released to {af}</span>
+              <span>{formatNaira(j.escrow)}</span>
+            </div>
+          </div>
           <button
             className="btn primary"
             onClick={() => {
@@ -983,7 +1025,7 @@ export function ClientJob({ job: j }: { job: Job }) {
         <div className="focus bad">
           <h4>Marked “not as described”</h4>
           <p>
-            {af} found the job different from your description. Under the 50% rule, {formatNaira(ms.artisan)} of the service fee paid for the visit and {formatNaira(ms.clientRefund)} came back to you. The materials stay with you.
+            {af} found the job different from your description. Under the 10% rule, {formatNaira(ms.artisan)} of the service fee paid for the visit and {formatNaira(ms.clientRefund)} came back to you. The materials stay with you.
           </p>
           <button className="btn secondary" onClick={() => go({ name: 'postJob', category: j.category })}>
             Post the job again with the right details
