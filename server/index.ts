@@ -9,11 +9,12 @@ import { DEMO_ACCOUNTS } from '../src/domain/seed';
 import { normalizePhone } from '../src/domain/rules';
 import type { SignupProfile } from '../src/domain/actions';
 import { viewFor } from '../src/domain/view';
+import { MediaError, createMediaStore, r2ConfigFromEnv } from './r2';
 
 const PORT = Number(process.env.PORT) || 3000;
 const APP_ENV = process.env.APP_ENV || 'local';
 const DIST = resolve(process.env.STATIC_DIR || 'dist');
-const MAX_BODY = 8 * 1024 * 1024; // photos travel as data URLs
+const MAX_BODY = 10 * 1024 * 1024; // photos travel as data URLs until the server moves them to R2
 
 const MIME: Record<string, string> = {
   '.html': 'text/html; charset=utf-8',
@@ -34,6 +35,20 @@ const core = await createCore(storage, { allowDemoActions: DEMO });
 // Real texts when Termii is configured; otherwise staging shows the code on screen and production refuses.
 const sms = process.env.TERMII_API_KEY ? termiiSender(process.env.TERMII_API_KEY, process.env.TERMII_SENDER_ID || 'Allyfe', process.env.TERMII_BASE_URL) : undefined;
 const auth = await createAuth({ store: storage.auth, sms, showCodes: DEMO });
+
+const media = createMediaStore(r2ConfigFromEnv());
+console.log(media.enabled ? 'Media: Cloudflare R2' : 'Media: inline (R2 not configured)');
+
+/** Moves any uploaded photos in an action to R2; turns problems into a clear message for the person. */
+async function withMedia<A extends { type: string }>(action: A, userId: string): Promise<{ action: A } | { status: number; error: string }> {
+  try {
+    return { action: await media.ingest(action, userId) };
+  } catch (e) {
+    if (e instanceof MediaError) return { status: 400, error: e.message };
+    console.error(e);
+    return { status: 502, error: "We couldn't save your photo just now. Check your connection and try again." };
+  }
+}
 
 const userIdForPhone = (phone: string) => Object.values(core.snapshot().state.users).find((u) => normalizePhone(u.phone) === phone)?.id;
 const bearer = (req: IncomingMessage) => /^Bearer (.+)$/.exec(req.headers.authorization ?? '')?.[1];
@@ -79,7 +94,7 @@ async function serveStatic(pathname: string, res: ServerResponse) {
 const server = createServer(async (req, res) => {
   const url = new URL(req.url || '/', 'http://x');
   try {
-    if (url.pathname === '/api/health') return send(res, 200, { ok: true, env: APP_ENV, rev: core.snapshot().rev });
+    if (url.pathname === '/api/health') return send(res, 200, { ok: true, env: APP_ENV, rev: core.snapshot().rev, media: media.enabled ? 'r2' : 'inline' });
     if (url.pathname === '/api/state' && req.method === 'GET') {
       const { rev, state } = core.snapshot();
       if (url.searchParams.get('since') === String(rev)) {
@@ -104,7 +119,10 @@ const server = createServer(async (req, res) => {
           const userId = auth.userFor(bearer(req));
           const isReset = (body.action as { type?: string })?.type === 'reset';
           if (!isReset && (!userId || !users()[userId])) return send(res, 401, { error: 'Please sign in again.', signedOut: true });
-          const r = await core.apply({ ...(body as Parameters<typeof core.apply>[0]), userId: userId ?? '' });
+          const req0 = body as Parameters<typeof core.apply>[0];
+          const m = req0.action ? await withMedia(req0.action, userId ?? '') : { action: req0.action };
+          if ('error' in m) return send(res, m.status, { error: m.error });
+          const r = await core.apply({ ...req0, action: m.action, userId: userId ?? '' });
           const view = viewFor(r.state, userId && r.state.users[userId] ? userId : null);
           return r.ok ? send(res, 200, { rev: r.rev, state: view }) : send(res, r.status, { error: r.error, rev: r.rev, state: view });
         }
@@ -119,10 +137,20 @@ const server = createServer(async (req, res) => {
         case '/api/auth/register': {
           const phone = auth.takeTicket(String(body.ticket ?? ''));
           if (!phone) return send(res, 400, { error: 'Your phone check has expired. Start again.' });
-          const r = await core.register(phone, body.profile as SignupProfile, nonce());
+          const m = await withMedia({ type: 'registerUser', profile: body.profile as SignupProfile }, '');
+          if ('error' in m) return send(res, m.status, { error: m.error });
+          const r = await core.register(phone, m.action.profile, nonce());
           if (!r.ok) return send(res, r.status, { error: r.error });
           const userId = (r as { userId: string }).userId;
           return send(res, 200, { token: await auth.issue(userId), userId, rev: r.rev, state: viewFor(r.state, userId) });
+        }
+        case '/api/media/signed': {
+          // A 5-minute link to a private document (ID, CAC…), for its owner or Allyfe staff only.
+          const userId = auth.userFor(bearer(req));
+          const u = userId ? users()[userId] : undefined;
+          if (!u) return send(res, 401, { error: 'Please sign in again.', signedOut: true });
+          const link = media.signedUrl(String(body.ref ?? ''), u);
+          return link ? send(res, 200, { url: link }) : send(res, 403, { error: 'You cannot open this document.' });
         }
         case '/api/auth/signout':
           await auth.revoke(bearer(req));

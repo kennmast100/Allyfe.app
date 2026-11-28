@@ -1,3 +1,4 @@
+import { useEffect, useState } from 'react';
 import type { AvatarSpec, Category, ImageRef } from '../domain/types';
 
 /** Static, app-authored SVG markup only. Never pass user input here. */
@@ -99,8 +100,36 @@ const SCENES: Record<string, string> = {
 };
 export const SCENE_KEYS = Object.keys(SCENES);
 
-/** Shows a built-in illustration, or a real uploaded photo (data URL). */
+/** Private documents (ID, CAC…) are opened through a short-lived signed link; the app store provides it. */
+let privateResolver: ((ref: string) => Promise<string | null>) | null = null;
+export const setPrivateMediaResolver = (fn: typeof privateResolver): void => {
+  privateResolver = fn;
+};
+const isVideoUrl = (u: string) => /\.(mp4|webm|mov)(\?|$)/i.test(u);
+
+function PrivatePicture({ src, className, alt }: { src: string; className?: string; alt: string }) {
+  const [url, setUrl] = useState<string | null>(null);
+  useEffect(() => {
+    let live = true;
+    privateResolver?.(src).then((u) => live && setUrl(u));
+    return () => {
+      live = false;
+    };
+  }, [src]);
+  if (!url) return <span className={'pic private-ph ' + (className ?? '')} role="img" aria-label={alt || 'Private document'}>🔒</span>;
+  return <img className={'pic ' + (className ?? '')} src={url} alt={alt} />;
+}
+
+/** Shows a built-in illustration, an uploaded photo/video (R2 link, or inline when R2 is off), or a private document. */
 export function Picture({ src, className, alt = '' }: { src: ImageRef; className?: string; alt?: string }) {
+  if (src.startsWith('r2priv:')) return <PrivatePicture src={src} className={className} alt={alt} />;
+  if (/^https?:\/\//.test(src)) {
+    return isVideoUrl(src) ? (
+      <video className={'pic ' + (className ?? '')} src={src} controls playsInline muted preload="metadata" aria-label={alt || 'Video'} />
+    ) : (
+      <img className={'pic ' + (className ?? '')} src={src} alt={alt} loading="lazy" />
+    );
+  }
   if (src.startsWith('data:image/')) return <img className={'pic ' + (className ?? '')} src={src} alt={alt} />;
   if (src.startsWith('data:video/')) return <video className={'pic ' + (className ?? '')} src={src} controls playsInline muted preload="metadata" aria-label={alt || 'Video'} />;
   const body = SCENES[src] ?? SCENES.room;

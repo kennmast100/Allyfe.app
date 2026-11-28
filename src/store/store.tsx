@@ -3,6 +3,7 @@ import { DomainError, LOCAL_ONLY_ACTIONS, reduce, type Action, type SignupProfil
 import { normalizePhone } from '../domain/rules';
 import { seedState, STATE_VERSION } from '../domain/seed';
 import type { AppState, User } from '../domain/types';
+import { setPrivateMediaResolver } from '../components/art';
 
 /** Every screen in the app. Params travel with the route so screens stay pure. */
 export type Route =
@@ -277,6 +278,16 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       return { error: "Couldn't reach Allyfe. Check your connection and try again." };
     }
   };
+  // Private documents (ID, CAC…) are opened through a 5-minute signed link from the server.
+  useEffect(() => {
+    setPrivateMediaResolver(async (ref) => {
+      const r = await post('/api/media/signed', { ref });
+      return typeof r.url === 'string' ? r.url : null;
+    });
+    return () => {
+      setPrivateMediaResolver(null);
+    };
+  }, []);
   /** Loads this person's own view of the data from the server. */
   const refresh = useCallback(
     async (userId: string | null) => {

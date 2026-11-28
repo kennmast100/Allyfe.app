@@ -560,3 +560,4 @@ button.sq.zoomable { position: relative; padding: 0; border: 0; cursor: zoom-in;
 .supply-choice .card { display: grid; gap: 4px; text-align: left; cursor: pointer; font: inherit; color: inherit; }
 .supply-choice .card.on { border-color: var(--teal); box-shadow: inset 0 0 0 2px var(--teal); background: #F0FDFA; }
 .offer-line input[readonly] { background: var(--sand); color: var(--muted); }
+.private-ph { display: grid; place-items: center; background: var(--sand); font-size: 20px; }
